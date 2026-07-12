@@ -28,11 +28,9 @@ kotlin {
         androidMain.dependencies {
             implementation(compose.preview)
             implementation(libs.androidx.activity.compose)
-            // In-app ADB (wireless-debugging pairing + shell) for the dedicated-dash bootstrap.
             implementation(libs.libadb.android)
             implementation(libs.bouncycastle.pkix)
             implementation(libs.conscrypt.android)
-            // SDL "Path B": USB/AOA full-motion H.264 to USB head units (Tracer etc.).
             implementation(libs.smartdevicelink.android)
         }
         commonMain.dependencies {
@@ -56,18 +54,15 @@ compose.resources {
     packageOfResClass = "app.pillion.resources"
 }
 
-// Code coverage focuses on the unit-testable shared domain (protocol codec, head-unit profiles/registry,
-// SemVer, controllers). Compose UI, Android-framework services and generated code are excluded because
-// they require an instrumented device, not JVM unit tests — leaving them in would mask real coverage.
 kover {
     reports {
         filters {
             excludes {
                 classes(
-                    "app.pillion.ui.*",          // Compose screens
-                    "app.pillion.android.*",     // Android services / framework glue
-                    "app.pillion.server.*",      // Ktor dash server (device-bound)
-                    "app.pillion.resources.*",   // generated resource accessors
+                    "app.pillion.ui.*",
+                    "app.pillion.android.*",
+                    "app.pillion.server.*",
+                    "app.pillion.resources.*",
                     "*ComposableSingletons*",
                     "*ComposeApp*",
                 )
@@ -77,8 +72,6 @@ kover {
     }
 }
 
-// Release signing is read from a gitignored keystore.properties (local only). When it's absent
-// (e.g. a fresh clone or CI), release builds are simply left unsigned so the project still builds.
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 val keystoreProperties = Properties().apply {
     if (keystorePropertiesFile.exists()) FileInputStream(keystorePropertiesFile).use { load(it) }
@@ -89,13 +82,12 @@ android {
     compileSdk = libs.versions.android.compileSdk.get().toInt()
 
     defaultConfig {
-        applicationId = "app.pillion"
+        applicationId = "app.pillion.tracer7zoom"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 2
-        versionName = "0.2.0-alpha"
+        versionCode = 3
+        versionName = "0.2.1-tracer7-zoom"
     }
-    // Exposes VERSION_NAME so AppInfo.VERSION reads the build's own version (not a hardcoded copy).
     buildFeatures {
         buildConfig = true
     }
@@ -106,8 +98,6 @@ android {
     }
     testOptions {
         unitTests {
-            // Stub android.util.Log etc. in JVM unit tests (the shared Logger maps to android.util.Log
-            // on this target) so commonTest can exercise logging code paths without an emulator.
             isReturnDefaultValues = true
         }
     }

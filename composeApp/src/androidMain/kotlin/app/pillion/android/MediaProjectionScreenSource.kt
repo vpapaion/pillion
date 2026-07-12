@@ -2,7 +2,10 @@ package app.pillion.android
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.Image
@@ -29,10 +32,14 @@ class MediaProjectionScreenSource(
     private var reader: ImageReader? = null
     private var display: VirtualDisplay? = null
     @Volatile private var latest: Bitmap? = null
+    private val zoomed = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)
+    private val zoomCanvas = Canvas(zoomed)
+    private val source = Rect(CROP_LEFT, CROP_TOP, CROP_LEFT + CROP_WIDTH, CROP_TOP + CROP_HEIGHT)
+    private val destination = Rect(0, 0, WIDTH, HEIGHT)
+    private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
 
     override fun start() {
-        if (display != null) return // idempotent: capture may be pre-started by the service
-        // Android 14+ requires a registered callback before createVirtualDisplay.
+        if (display != null) return
         projection.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() { Log.w(TAG, "screen: projection stopped by the system") }
         }, handler)
@@ -44,7 +51,7 @@ class MediaProjectionScreenSource(
             "pillion", WIDTH, HEIGHT, dpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, r.surface, null, handler,
         )
-        Log.d(TAG, "screen: virtual display created (${WIDTH}x$HEIGHT)")
+        Log.d(TAG, "screen: virtual display created (${WIDTH}x$HEIGHT), zoom=${ZOOM_PERCENT}%")
     }
 
     private fun capture(ir: ImageReader) {
@@ -75,7 +82,8 @@ class MediaProjectionScreenSource(
     override fun latestFrame(): ByteArray? {
         val bitmap = latest ?: return null
         val out = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+        zoomCanvas.drawBitmap(bitmap, source, destination, paint)
+        zoomed.compress(Bitmap.CompressFormat.JPEG, quality, out)
         return out.toByteArray()
     }
 
@@ -85,12 +93,18 @@ class MediaProjectionScreenSource(
         runCatching { projection.stop() }
         thread.quitSafely()
         latest = null
+        runCatching { zoomed.recycle() }
     }
 
     private companion object {
         const val WIDTH = 480
         const val HEIGHT = 240
         const val DEFAULT_QUALITY = 40
+        const val ZOOM_PERCENT = 125
+        const val CROP_WIDTH = WIDTH * 100 / ZOOM_PERCENT
+        const val CROP_HEIGHT = HEIGHT * 100 / ZOOM_PERCENT
+        const val CROP_LEFT = (WIDTH - CROP_WIDTH) / 2
+        const val CROP_TOP = (HEIGHT - CROP_HEIGHT) / 2
         const val TAG = "Pillion"
     }
 }
