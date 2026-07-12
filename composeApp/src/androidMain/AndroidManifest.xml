@@ -2,55 +2,96 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
-    <uses-feature android:name="android.hardware.usb.accessory" android:required="false" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Network: only used for the in-app update check against GitHub Releases -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
-    <uses-permission android:name="android.permission.SUBSCRIBE_TO_KEYGUARD_LOCKED_STATE" />
+    <!-- Required by the SDL router service (its integration validator aborts without it). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Wireless-debugging setup: keep mDNS visible while discovering adb's pairing port. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+    <!-- Dash mode: find which app to promote when the screen is blocked (the foreground app).
+         Special access, granted by the user in Settings → Usage access. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <!-- Dash mode: resolve the foreground app's launcher activity to promote it. Without this,
+         Android 11+ package visibility hides other apps and getLaunchIntentForPackage() returns
+         null even for an app UsageStats just reported (e.g. Maps), so nothing gets promoted. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+    <!-- Dash mode: listen for real keyguard unlocks so the app returns from the virtual display
+         even when screen-power broadcasts are swallowed by panel-off APIs. -->
+    <uses-permission android:name="android.permission.SUBSCRIBE_TO_KEYGUARD_LOCKED_STATE"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Bluetooth: connect to the already-bonded dash (no scanning needed).
+         NOTE: BLUETOOTH has NO maxSdkVersion — SDL's IntegrationValidator requires it unconditionally
+         (even on API 31+), or the SdlRouterService crashes on the USB path. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- SDL "Path B": the Yamaha CCU connects as a USB accessory; high-bandwidth video needs this. -->
+    <uses-feature android:name="android.hardware.usb.accessory" android:required="false" />
+    <!-- Android 11+ package visibility: SDL's RouterServiceValidator does queryIntentServices() for
+         the router action; without this it returns empty -> registration validation fails. -->
+    <queries>
+        <intent>
+            <action android:name="com.smartdevicelink.router.service" />
+        </intent>
+    </queries>
+
+    <!-- Foreground service hosting MediaProjection screen capture -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- Dedicated-dash mode streams to the Bluetooth dash with no MediaProjection. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
-        android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
+        android:name="app.pillion.android.PillionApp"
         android:label="Pillion Zoom"
+        android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/AppTheme">
-
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
             android:name="app.pillion.MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
+        <!-- Dev-only: in-app ADB bootstrap proof (Milestone 1). -->
         <activity
             android:name="app.pillion.android.AdbBootstrapActivity"
             android:exported="true"
-            android:excludeFromRecents="true"
             android:label="Pillion ADB setup (dev)" />
+
+        <receiver
+            android:name="app.pillion.android.AdbPairingCodeReceiver"
+            android:exported="false" />
 
         <service
             android:name="app.pillion.android.CaptureService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice|mediaProjection" />
+            android:foregroundServiceType="mediaProjection|connectedDevice" />
 
+        <!-- SDL "Path B" (USB full-motion). The SDL session. -->
         <service
             android:name="app.pillion.android.sdl.SdlService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice|mediaProjection" />
 
+        <!-- SDL multiplex router. MUST run in the dedicated process or SDL self-destructs. -->
         <service
-            android:name="com.smartdevicelink.transport.SdlRouterService"
+            android:name="app.pillion.android.sdl.SdlRouterService"
             android:exported="true"
+            android:foregroundServiceType="connectedDevice"
+            android:process="com.smartdevicelink.router"
             tools:node="merge">
             <intent-filter>
                 <action android:name="com.smartdevicelink.router.service" />
@@ -60,6 +101,7 @@
                 android:value="@integer/sdl_router_service_version_value" />
         </service>
 
+        <!-- Wakes the app when the head unit connects (USB attach / router start). -->
         <receiver
             android:name="app.pillion.android.sdl.SdlReceiver"
             android:exported="true"
@@ -70,6 +112,7 @@
             </intent-filter>
         </receiver>
 
+        <!-- SDL library activity that receives USB_ACCESSORY_ATTACHED and hands the accessory to the router. -->
         <activity
             android:name="com.smartdevicelink.transport.USBAccessoryAttachmentActivity"
             android:exported="true"
