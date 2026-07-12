@@ -3,6 +3,8 @@ on:
   workflow_dispatch:
   push:
     branches: [agent/tracer7-display-zoom]
+  pull_request:
+    branches: [main]
 permissions:
   contents: read
 jobs:
