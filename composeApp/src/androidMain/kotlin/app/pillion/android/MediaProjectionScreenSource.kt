@@ -20,6 +20,10 @@ import java.io.ByteArrayOutputStream
 /**
  * A [ScreenSource] backed by MediaProjection. Mirrors the display into a 480x240 [ImageReader]
  * and, on demand, compresses the most recent frame to JPEG. Single responsibility: screen -> JPEG.
+ *
+ * The Tracer 7 display is physically small, so the centre of the captured frame is cropped before
+ * encoding. At 175% zoom the visible source region is about 274x137 pixels and is scaled back to the
+ * dash's native 480x240 frame. This makes cards, labels and controls substantially easier to read.
  */
 class MediaProjectionScreenSource(
     private val context: Context,
@@ -51,7 +55,11 @@ class MediaProjectionScreenSource(
             "pillion", WIDTH, HEIGHT, dpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, r.surface, null, handler,
         )
-        Log.d(TAG, "screen: virtual display created (${WIDTH}x$HEIGHT), zoom=${ZOOM_PERCENT}%")
+        Log.d(
+            TAG,
+            "screen: virtual display created (${WIDTH}x$HEIGHT), zoom=${ZOOM_PERCENT}%, " +
+                "crop=${CROP_WIDTH}x$CROP_HEIGHT@${CROP_LEFT},${CROP_TOP}",
+        )
     }
 
     private fun capture(ir: ImageReader) {
@@ -100,7 +108,7 @@ class MediaProjectionScreenSource(
         const val WIDTH = 480
         const val HEIGHT = 240
         const val DEFAULT_QUALITY = 40
-        const val ZOOM_PERCENT = 125
+        const val ZOOM_PERCENT = 175
         const val CROP_WIDTH = WIDTH * 100 / ZOOM_PERCENT
         const val CROP_HEIGHT = HEIGHT * 100 / ZOOM_PERCENT
         const val CROP_LEFT = (WIDTH - CROP_WIDTH) / 2
