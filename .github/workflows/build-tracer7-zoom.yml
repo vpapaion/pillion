@@ -1,6 +1,10 @@
-name: Apply focus feature and build APK
+name: Build Pillion Zoom Focus APK
 
 on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/tracer7-display-zoom
   pull_request:
     branches:
       - main
@@ -16,14 +20,16 @@ jobs:
       - name: Check out feature branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.head_ref || github.ref_name }}
 
-      - name: Apply focus feature source patch
+      - name: Apply pending focus feature source patch
         run: |
-          gzip -dc .github/focus-feature-source.patch.gz | git apply --check
-          gzip -dc .github/focus-feature-source.patch.gz | git apply
-          rm .github/focus-feature-source.patch.gz
-          mv .github/build-tracer7-zoom.final.yml .github/workflows/build-tracer7-zoom.yml
+          if [ -f .github/focus-feature-source.patch.gz ]; then
+            gzip -dc .github/focus-feature-source.patch.gz | git apply --check
+            gzip -dc .github/focus-feature-source.patch.gz | git apply
+            rm .github/focus-feature-source.patch.gz
+            rm -f .github/build-tracer7-zoom.final.yml
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -47,12 +53,14 @@ jobs:
 
       - name: Publish verified source changes
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git diff --cached --check
-          git commit -m 'feat(android): add selectable dashboard focus area [skip ci]'
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add -A
+            git diff --cached --check
+            git commit -m 'feat(android): add selectable dashboard focus area [skip ci]'
+            git push origin HEAD:${{ github.head_ref || github.ref_name }}
+          fi
 
       - name: Name APK
         run: cp composeApp/build/outputs/apk/debug/composeApp-debug.apk Pillion-Zoom-Tracer7-Focus.apk
