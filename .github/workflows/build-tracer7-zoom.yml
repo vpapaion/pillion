@@ -1,9 +1,9 @@
 name: Export Pillion Zoom source
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/tracer7-display-zoom
+      - main
 
 permissions:
   contents: read
