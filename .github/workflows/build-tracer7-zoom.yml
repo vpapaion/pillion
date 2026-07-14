@@ -68,3 +68,4 @@ jobs:
           path: Pillion-Zoom-Tracer7-Joystick.apk
           if-no-files-found: error
           retention-days: 30
+          # This artifact is the real-bike test build for Tracer joystick crop controls.
