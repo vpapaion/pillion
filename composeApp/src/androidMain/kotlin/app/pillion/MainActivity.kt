@@ -57,6 +57,8 @@ class MainActivity : ComponentActivity() {
                     .putExtra(CaptureService.EXTRA_DASH_ENABLED, settingsStore.dashEnabled())
                     .putExtra(CaptureService.EXTRA_DASH_WIDTH, pendingSettings.dashResolution.width)
                     .putExtra(CaptureService.EXTRA_DASH_HEIGHT, pendingSettings.dashResolution.height)
+                    .putExtra(CaptureService.EXTRA_MIRROR_ZOOM, pendingSettings.zoomPercent)
+                    .putExtra(CaptureService.EXTRA_MIRROR_FOCUS, pendingSettings.focus.name)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
                 else startService(intent)
             }

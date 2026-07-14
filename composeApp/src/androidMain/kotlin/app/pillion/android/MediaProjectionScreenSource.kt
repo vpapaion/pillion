@@ -14,21 +14,21 @@ import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
+import app.pillion.core.MirrorFocus
+import app.pillion.core.MirrorZoom
 import app.pillion.core.ScreenSource
 import java.io.ByteArrayOutputStream
 
 /**
  * A [ScreenSource] backed by MediaProjection. Mirrors the display into a 480x240 [ImageReader]
  * and, on demand, compresses the most recent frame to JPEG. Single responsibility: screen -> JPEG.
- *
- * The Tracer 7 display is physically small, so the centre of the captured frame is cropped before
- * encoding. At 175% zoom the visible source region is about 274x137 pixels and is scaled back to the
- * dash's native 480x240 frame. This makes cards, labels and controls substantially easier to read.
  */
 class MediaProjectionScreenSource(
     private val context: Context,
     private val projection: MediaProjection,
     private val quality: Int = DEFAULT_QUALITY,
+    zoomPercent: Int = MirrorZoom.DEFAULT_PERCENT,
+    focus: MirrorFocus = MirrorFocus.DEFAULT,
 ) : ScreenSource {
 
     private val thread = HandlerThread("pillion-capture").apply { start() }
@@ -36,14 +36,25 @@ class MediaProjectionScreenSource(
     private var reader: ImageReader? = null
     private var display: VirtualDisplay? = null
     @Volatile private var latest: Bitmap? = null
-    private val zoomed = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)
-    private val zoomCanvas = Canvas(zoomed)
-    private val source = Rect(CROP_LEFT, CROP_TOP, CROP_LEFT + CROP_WIDTH, CROP_TOP + CROP_HEIGHT)
+    private val zoomPercent = MirrorZoom.clamp(zoomPercent)
+    private val focus = focus
+    private val zoomed = if (this.zoomPercent == 100) null else Bitmap.createBitmap(
+        WIDTH,
+        HEIGHT,
+        Bitmap.Config.ARGB_8888,
+    )
+    private val zoomCanvas = zoomed?.let(::Canvas)
+    private val cropWidth = MirrorZoom.cropSize(WIDTH, this.zoomPercent)
+    private val cropHeight = MirrorZoom.cropSize(HEIGHT, this.zoomPercent)
+    private val cropLeft = this.focus.cropLeft(WIDTH, cropWidth)
+    private val cropTop = this.focus.cropTop(HEIGHT, cropHeight)
+    private val source = Rect(cropLeft, cropTop, cropLeft + cropWidth, cropTop + cropHeight)
     private val destination = Rect(0, 0, WIDTH, HEIGHT)
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
 
     override fun start() {
-        if (display != null) return
+        if (display != null) return // idempotent: capture may be pre-started by the service
+        // Android 14+ requires a registered callback before createVirtualDisplay.
         projection.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() { Log.w(TAG, "screen: projection stopped by the system") }
         }, handler)
@@ -57,8 +68,8 @@ class MediaProjectionScreenSource(
         )
         Log.d(
             TAG,
-            "screen: virtual display created (${WIDTH}x$HEIGHT), zoom=${ZOOM_PERCENT}%, " +
-                "crop=${CROP_WIDTH}x$CROP_HEIGHT@${CROP_LEFT},${CROP_TOP}",
+            "screen: virtual display created (${WIDTH}x$HEIGHT), zoom=$zoomPercent% " +
+                "focus=${focus.name} crop=${cropWidth}x$cropHeight@$cropLeft,$cropTop",
         )
     }
 
@@ -90,8 +101,10 @@ class MediaProjectionScreenSource(
     override fun latestFrame(): ByteArray? {
         val bitmap = latest ?: return null
         val out = ByteArrayOutputStream()
-        zoomCanvas.drawBitmap(bitmap, source, destination, paint)
-        zoomed.compress(Bitmap.CompressFormat.JPEG, quality, out)
+        val frame = zoomed?.also { output ->
+            zoomCanvas?.drawBitmap(bitmap, source, destination, paint)
+        } ?: bitmap
+        frame.compress(Bitmap.CompressFormat.JPEG, quality, out)
         return out.toByteArray()
     }
 
@@ -101,18 +114,13 @@ class MediaProjectionScreenSource(
         runCatching { projection.stop() }
         thread.quitSafely()
         latest = null
-        runCatching { zoomed.recycle() }
+        runCatching { zoomed?.recycle() }
     }
 
     private companion object {
         const val WIDTH = 480
         const val HEIGHT = 240
         const val DEFAULT_QUALITY = 40
-        const val ZOOM_PERCENT = 175
-        const val CROP_WIDTH = WIDTH * 100 / ZOOM_PERCENT
-        const val CROP_HEIGHT = HEIGHT * 100 / ZOOM_PERCENT
-        const val CROP_LEFT = (WIDTH - CROP_WIDTH) / 2
-        const val CROP_TOP = (HEIGHT - CROP_HEIGHT) / 2
         const val TAG = "Pillion"
     }
 }

@@ -65,7 +65,8 @@
             </intent-filter>
         </activity>
 
-        <!-- Dev-only: in-app ADB bootstrap proof (Milestone 1). -->
+        <!-- Dev-only: in-app ADB bootstrap proof (Milestone 1). Launch via:
+             adb shell am start -n <application-id>/app.pillion.android.AdbBootstrapActivity -->
         <activity
             android:name="app.pillion.android.AdbBootstrapActivity"
             android:exported="true"
@@ -86,7 +87,8 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice|mediaProjection" />
 
-        <!-- SDL multiplex router. MUST run in the dedicated process or SDL self-destructs. -->
+        <!-- SDL multiplex router. MUST run in the dedicated process or SDL self-destructs
+             ("Not using correct process. Shutting down") and the USB handoff hangs. -->
         <service
             android:name="app.pillion.android.sdl.SdlRouterService"
             android:exported="true"
@@ -112,7 +114,8 @@
             </intent-filter>
         </receiver>
 
-        <!-- SDL library activity that receives USB_ACCESSORY_ATTACHED and hands the accessory to the router. -->
+        <!-- SDL library activity that receives USB_ACCESSORY_ATTACHED and hands the accessory to the
+             router. The accessory_filter must match the CCU's advertised manufacturer/model. -->
         <activity
             android:name="com.smartdevicelink.transport.USBAccessoryAttachmentActivity"
             android:exported="true"

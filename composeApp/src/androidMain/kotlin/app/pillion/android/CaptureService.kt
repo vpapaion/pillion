@@ -20,8 +20,10 @@ import android.os.PowerManager
 import android.util.Log
 import app.pillion.core.DashResolution
 import app.pillion.core.MirrorEngine
+import app.pillion.core.MirrorFocus
 import app.pillion.core.ScreenSource
 import app.pillion.core.MirrorState
+import app.pillion.core.MirrorZoom
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -61,9 +63,14 @@ class CaptureService : Service() {
 
         val quality = intent?.getIntExtra(EXTRA_QUALITY, 40) ?: 40
         val maxFps = intent?.getIntExtra(EXTRA_MAX_FPS, 15) ?: 15
+        val zoomPercent = MirrorZoom.clamp(
+            intent?.getIntExtra(EXTRA_MIRROR_ZOOM, MirrorZoom.DEFAULT_PERCENT)
+                ?: MirrorZoom.DEFAULT_PERCENT,
+        )
+        val mirrorFocus = MirrorFocus.fromName(intent?.getStringExtra(EXTRA_MIRROR_FOCUS))
         val dashResolution = dashResolutionFrom(intent)
         dashEnabled = intent?.getBooleanExtra(EXTRA_DASH_ENABLED, false) ?: false
-        startSession(quality, maxFps, dashResolution)
+        startSession(quality, maxFps, dashResolution, zoomPercent, mirrorFocus)
         return START_NOT_STICKY
     }
 
@@ -73,7 +80,13 @@ class CaptureService : Service() {
      * (foreground app on a trusted display) whenever the phone is locked — **mirror while unlocked,
      * dash while locked**. The helper only encodes while locked, so it costs no extra battery idle.
      */
-    private fun startSession(quality: Int, maxFps: Int, dashResolution: DashResolution) {
+    private fun startSession(
+        quality: Int,
+        maxFps: Int,
+        dashResolution: DashResolution,
+        zoomPercent: Int,
+        mirrorFocus: MirrorFocus,
+    ) {
         // A screen-capture grant is single-use. If it's missing or stale (e.g. cleared when the app
         // crashed + restarted), starting a mediaProjection foreground service throws SecurityException
         // — which would HARD-CRASH the app. So validate first, and on a stale grant fall back to a
@@ -99,7 +112,7 @@ class CaptureService : Service() {
         // The grant is single-use; clear it so a later restart can't reuse a dead token (→ crash).
         resultCode = 0; resultData = null
         // Create the mirror display NOW, while the projection token is fresh.
-        val mirror = MediaProjectionScreenSource(this, projection, quality)
+        val mirror = MediaProjectionScreenSource(this, projection, quality, zoomPercent, mirrorFocus)
         runCatching { mirror.start() }
 
         val source: ScreenSource = if (dashEnabled) {
@@ -113,6 +126,8 @@ class CaptureService : Service() {
                         this@CaptureService,
                         quality,
                         dashResolution,
+                        zoomPercent,
+                        mirrorFocus,
                         preferExisting = true,
                     )
                 }
@@ -125,7 +140,7 @@ class CaptureService : Service() {
             registerKeyguardUnlockListener()
             // Self-heal: if the helper is killed (adbd restart on Wi-Fi/debug loss), respawn it over
             // the loopback channel so the dash recovers instead of freezing.
-            DashHelper.startWatchdog(this, quality, dashResolution)
+            DashHelper.startWatchdog(this, quality, dashResolution, zoomPercent, mirrorFocus)
             switch
         } else {
             mirror
@@ -454,6 +469,8 @@ class CaptureService : Service() {
         const val EXTRA_DASH_ENABLED = "dashEnabled"
         const val EXTRA_DASH_WIDTH = "dashWidth"
         const val EXTRA_DASH_HEIGHT = "dashHeight"
+        const val EXTRA_MIRROR_ZOOM = "mirrorZoomPercent"
+        const val EXTRA_MIRROR_FOCUS = "mirrorFocus"
 
         // Handed over by the Activity after the user grants screen capture.
         @Volatile var resultCode: Int = 0

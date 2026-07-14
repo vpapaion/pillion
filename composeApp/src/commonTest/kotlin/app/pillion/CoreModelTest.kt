@@ -1,7 +1,9 @@
 package app.pillion
 
 import app.pillion.core.DashResolution
+import app.pillion.core.MirrorFocus
 import app.pillion.core.MirrorSettings
+import app.pillion.core.MirrorZoom
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -28,5 +30,33 @@ class CoreModelTest {
         assertEquals(40, s.quality)
         assertEquals(15, s.maxFps)
         assertEquals(DashResolution.DEFAULT, s.dashResolution)
+        assertEquals(175, s.zoomPercent)
+        assertEquals(MirrorFocus.CENTER, s.focus)
+    }
+
+    @Test
+    fun mirror_zoom_clamps_and_centres_crop() {
+        assertEquals(100, MirrorZoom.clamp(80))
+        assertEquals(200, MirrorZoom.clamp(240))
+        assertEquals(400, MirrorZoom.cropSize(480, 120))
+        assertEquals(200, MirrorZoom.cropSize(240, 120))
+        assertEquals(40, MirrorZoom.cropStart(480, 400))
+        assertEquals(20, MirrorZoom.cropStart(240, 200))
+    }
+
+    @Test
+    fun mirror_focus_positions_the_crop_at_each_requested_area() {
+        assertEquals(0, MirrorFocus.TOP_LEFT.cropLeft(480, 240))
+        assertEquals(0, MirrorFocus.TOP_LEFT.cropTop(240, 120))
+        assertEquals(240, MirrorFocus.TOP_RIGHT.cropLeft(480, 240))
+        assertEquals(0, MirrorFocus.TOP_RIGHT.cropTop(240, 120))
+        assertEquals(120, MirrorFocus.CENTER.cropLeft(480, 240))
+        assertEquals(60, MirrorFocus.CENTER.cropTop(240, 120))
+        assertEquals(0, MirrorFocus.BOTTOM_LEFT.cropLeft(480, 240))
+        assertEquals(120, MirrorFocus.BOTTOM_LEFT.cropTop(240, 120))
+        assertEquals(240, MirrorFocus.BOTTOM_RIGHT.cropLeft(480, 240))
+        assertEquals(120, MirrorFocus.BOTTOM_RIGHT.cropTop(240, 120))
+        assertEquals(MirrorFocus.CENTER, MirrorFocus.fromName("unknown"))
+        assertEquals(MirrorFocus.TOP_RIGHT, MirrorFocus.fromName("top_right"))
     }
 }

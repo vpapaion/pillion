@@ -13,7 +13,9 @@ import app.pillion.core.AppInfo
 import app.pillion.core.DashSetup
 import app.pillion.core.DashResolution
 import app.pillion.core.MirrorController
+import app.pillion.core.MirrorFocus
 import app.pillion.core.MirrorSettings
+import app.pillion.core.MirrorZoom
 import app.pillion.core.SettingsStore
 import app.pillion.core.ThemeMode
 import app.pillion.core.UpdateChecker
@@ -22,7 +24,7 @@ import app.pillion.core.headunit.HeadUnitProfile
 import app.pillion.core.headunit.HeadUnitRegistry
 
 /** The public GitHub repository — shown in-app so anyone can read the source. */
-const val REPO_URL = "https://github.com/alexandrevega/pillion"
+const val REPO_URL = "https://github.com/vpapaion/pillion"
 
 /**
  * App entry point: owns the top-level UI state and routes between bike-selection (first run), Home and
@@ -60,6 +62,12 @@ fun App(
         var showDashOnboarding by rememberSaveable { mutableStateOf(false) }
         var dashEnabled by remember { mutableStateOf(settingsStore?.dashEnabled() ?: false) }
         var dashResolution by remember { mutableStateOf(settingsStore?.dashResolution() ?: DashResolution.DEFAULT) }
+        var mirrorZoomPercent by remember {
+            mutableStateOf(settingsStore?.mirrorZoomPercent() ?: MirrorZoom.DEFAULT_PERCENT)
+        }
+        var mirrorFocus by remember {
+            mutableStateOf(settingsStore?.mirrorFocus() ?: MirrorFocus.DEFAULT)
+        }
         var showDisclaimer by rememberSaveable { mutableStateOf(true) }
         var update by remember { mutableStateOf<UpdateInfo?>(null) }
         var updateDismissed by rememberSaveable { mutableStateOf(false) }
@@ -96,6 +104,16 @@ fun App(
                     dashResolution = it
                     settingsStore?.setDashResolution(it)
                 },
+                mirrorZoomPercent = mirrorZoomPercent,
+                onMirrorZoomPercent = {
+                    mirrorZoomPercent = MirrorZoom.clamp(it)
+                    settingsStore?.setMirrorZoomPercent(mirrorZoomPercent)
+                },
+                mirrorFocus = mirrorFocus,
+                onMirrorFocus = {
+                    mirrorFocus = it
+                    settingsStore?.setMirrorFocus(it)
+                },
                 onSetUpDash = { showDashOnboarding = true },
                 onDisableDash = { dashEnabled = false; settingsStore?.setDashEnabled(false) },
                 bikeName = profile.displayName,
@@ -108,7 +126,17 @@ fun App(
                 state = state,
                 update = update,
                 onOpenSettings = { showSettings = true },
-                onStart = { controller.start(MirrorSettings(quality, maxFps, dashResolution)) },
+                onStart = {
+                    controller.start(
+                        MirrorSettings(
+                            quality = quality,
+                            maxFps = maxFps,
+                            dashResolution = dashResolution,
+                            zoomPercent = mirrorZoomPercent,
+                            focus = mirrorFocus,
+                        ),
+                    )
+                },
                 onStop = controller::stop,
             )
         }
