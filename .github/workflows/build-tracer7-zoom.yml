@@ -16,12 +16,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Pack source
-        run: tar --exclude=.git -czf Pillion-Zoom-current-source.tar.gz .
+        run: tar --exclude=.git -czf /tmp/Pillion-Zoom-current-source.tar.gz .
 
       - name: Upload source
         uses: actions/upload-artifact@v4
         with:
           name: Pillion-Zoom-current-source
-          path: Pillion-Zoom-current-source.tar.gz
+          path: /tmp/Pillion-Zoom-current-source.tar.gz
           if-no-files-found: error
           retention-days: 2
