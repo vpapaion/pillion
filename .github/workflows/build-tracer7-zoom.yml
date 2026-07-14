@@ -1,13 +1,10 @@
-name: Build Pillion Zoom Focus APK
+name: Build Pillion Zoom Joystick APK
 
 on:
   workflow_dispatch:
   push:
     branches:
       - agent/tracer7-display-zoom
-  pull_request:
-    branches:
-      - main
 
 permissions:
   contents: write
@@ -20,15 +17,14 @@ jobs:
       - name: Check out feature branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref || github.ref_name }}
+          ref: ${{ github.ref_name }}
 
-      - name: Apply pending focus feature source patch
+      - name: Apply pending joystick feature source patch
         run: |
-          if [ -f .github/focus-feature-source.patch.gz ]; then
-            gzip -dc .github/focus-feature-source.patch.gz | git apply --check
-            gzip -dc .github/focus-feature-source.patch.gz | git apply
-            rm .github/focus-feature-source.patch.gz
-            rm -f .github/build-tracer7-zoom.final.yml
+          if [ -f .github/joystick-feature.patch.gz ]; then
+            gzip -dc .github/joystick-feature.patch.gz | git apply --check
+            gzip -dc .github/joystick-feature.patch.gz | git apply
+            rm .github/joystick-feature.patch.gz
           fi
 
       - name: Set up JDK 17
@@ -58,17 +54,17 @@ jobs:
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add -A
             git diff --cached --check
-            git commit -m 'feat(android): add selectable dashboard focus area [skip ci]'
-            git push origin HEAD:${{ github.head_ref || github.ref_name }}
+            git commit -m 'feat(android): control crop with Tracer joystick [skip ci]'
+            git push origin HEAD:${{ github.ref_name }}
           fi
 
       - name: Name APK
-        run: cp composeApp/build/outputs/apk/debug/composeApp-debug.apk Pillion-Zoom-Tracer7-Focus.apk
+        run: cp composeApp/build/outputs/apk/debug/composeApp-debug.apk Pillion-Zoom-Tracer7-Joystick.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Pillion-Zoom-Tracer7-Focus
-          path: Pillion-Zoom-Tracer7-Focus.apk
+          name: Pillion-Zoom-Tracer7-Joystick
+          path: Pillion-Zoom-Tracer7-Joystick.apk
           if-no-files-found: error
           retention-days: 30
