@@ -3,6 +3,7 @@ package app.pillion.android
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
@@ -14,6 +15,7 @@ import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
+import app.pillion.core.DashboardCropControl
 import app.pillion.core.MirrorFocus
 import app.pillion.core.MirrorZoom
 import app.pillion.core.ScreenSource
@@ -21,7 +23,10 @@ import java.io.ByteArrayOutputStream
 
 /**
  * A [ScreenSource] backed by MediaProjection. Mirrors the display into a 480x240 [ImageReader]
- * and, on demand, compresses the most recent frame to JPEG. Single responsibility: screen -> JPEG.
+ * and, on demand, crops/scales the most recent frame before compressing it to JPEG.
+ *
+ * Crop position is read from [MirrorViewportState] for every frame, so dashboard buttons can move
+ * the visible area immediately while mirroring continues.
  */
 class MediaProjectionScreenSource(
     private val context: Context,
@@ -29,32 +34,32 @@ class MediaProjectionScreenSource(
     private val quality: Int = DEFAULT_QUALITY,
     zoomPercent: Int = MirrorZoom.DEFAULT_PERCENT,
     focus: MirrorFocus = MirrorFocus.DEFAULT,
-) : ScreenSource {
+) : ScreenSource, DashboardCropControl {
 
     private val thread = HandlerThread("pillion-capture").apply { start() }
     private val handler = Handler(thread.looper)
     private var reader: ImageReader? = null
     private var display: VirtualDisplay? = null
     @Volatile private var latest: Bitmap? = null
-    private val zoomPercent = MirrorZoom.clamp(zoomPercent)
-    private val focus = focus
-    private val zoomed = if (this.zoomPercent == 100) null else Bitmap.createBitmap(
-        WIDTH,
-        HEIGHT,
-        Bitmap.Config.ARGB_8888,
-    )
-    private val zoomCanvas = zoomed?.let(::Canvas)
-    private val cropWidth = MirrorZoom.cropSize(WIDTH, this.zoomPercent)
-    private val cropHeight = MirrorZoom.cropSize(HEIGHT, this.zoomPercent)
-    private val cropLeft = this.focus.cropLeft(WIDTH, cropWidth)
-    private val cropTop = this.focus.cropTop(HEIGHT, cropHeight)
-    private val source = Rect(cropLeft, cropTop, cropLeft + cropWidth, cropTop + cropHeight)
+
+    private val output = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)
+    private val canvas = Canvas(output)
+    private val source = Rect()
     private val destination = Rect(0, 0, WIDTH, HEIGHT)
-    private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val imagePaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val overlayPaint = Paint().apply { color = Color.argb(190, 0, 0, 0) }
+    private val overlayTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 16f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+    }
+
+    init {
+        MirrorViewportState.initialize(context, zoomPercent, focus)
+    }
 
     override fun start() {
         if (display != null) return // idempotent: capture may be pre-started by the service
-        // Android 14+ requires a registered callback before createVirtualDisplay.
         projection.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() { Log.w(TAG, "screen: projection stopped by the system") }
         }, handler)
@@ -66,10 +71,11 @@ class MediaProjectionScreenSource(
             "pillion", WIDTH, HEIGHT, dpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, r.surface, null, handler,
         )
+        val viewport = MirrorViewportState.snapshot()
         Log.d(
             TAG,
-            "screen: virtual display created (${WIDTH}x$HEIGHT), zoom=$zoomPercent% " +
-                "focus=${focus.name} crop=${cropWidth}x$cropHeight@$cropLeft,$cropTop",
+            "screen: virtual display created (${WIDTH}x$HEIGHT), zoom=${viewport.zoomPercent}% " +
+                "crop=${viewport.xPercent},${viewport.yPercent}",
         )
     }
 
@@ -100,12 +106,35 @@ class MediaProjectionScreenSource(
 
     override fun latestFrame(): ByteArray? {
         val bitmap = latest ?: return null
-        val out = ByteArrayOutputStream()
-        val frame = zoomed?.also { output ->
-            zoomCanvas?.drawBitmap(bitmap, source, destination, paint)
-        } ?: bitmap
-        frame.compress(Bitmap.CompressFormat.JPEG, quality, out)
-        return out.toByteArray()
+        val viewport = MirrorViewportState.snapshot()
+        val cropWidth = MirrorZoom.cropSize(WIDTH, viewport.zoomPercent)
+        val cropHeight = MirrorZoom.cropSize(HEIGHT, viewport.zoomPercent)
+        val cropLeft = viewport.cropLeft(WIDTH, cropWidth)
+        val cropTop = viewport.cropTop(HEIGHT, cropHeight)
+        source.set(cropLeft, cropTop, cropLeft + cropWidth, cropTop + cropHeight)
+
+        canvas.drawBitmap(bitmap, source, destination, imagePaint)
+        drawOverlay(viewport)
+
+        return ByteArrayOutputStream().use { out ->
+            output.compress(Bitmap.CompressFormat.JPEG, quality, out)
+            out.toByteArray()
+        }
+    }
+
+    override fun cycleCropPreset(delta: Int) {
+        MirrorViewportState.cyclePreset(context, delta)
+    }
+
+    private fun drawOverlay(viewport: MirrorViewportSnapshot) {
+        if (!viewport.overlayVisible()) return
+        val text = viewport.message ?: return
+        val padding = 8f
+        val textWidth = overlayTextPaint.measureText(text)
+        val top = 8f
+        val bottom = top + 28f
+        canvas.drawRoundRect(8f, top, 8f + textWidth + padding * 2, bottom, 7f, 7f, overlayPaint)
+        canvas.drawText(text, 8f + padding, top + 20f, overlayTextPaint)
     }
 
     override fun stop() {
@@ -114,7 +143,7 @@ class MediaProjectionScreenSource(
         runCatching { projection.stop() }
         thread.quitSafely()
         latest = null
-        runCatching { zoomed?.recycle() }
+        runCatching { output.recycle() }
     }
 
     private companion object {

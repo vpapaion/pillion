@@ -215,7 +215,9 @@ internal fun SettingsScreen(
                 "on a fast phone). The cap keeps the frame rate down to save battery and reduce heat. " +
                 "Zoom enlarges maps and text by cropping the outer edges. Visible area chooses which " +
                 "part of the app remains on the Tracer 7 display: a corner or the centre. 100% shows " +
-                "the complete phone image, while 160–180% gives a much larger close-up.",
+                "the complete phone image, while 160–180% gives a much larger close-up. On compatible " +
+                "dashboards, joystick directions move the crop, OK recentres it, and navigation zoom " +
+                "buttons change zoom. NaviLite zoom buttons cycle through the five crop presets.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 6.dp, top = 8.dp, end = 6.dp),

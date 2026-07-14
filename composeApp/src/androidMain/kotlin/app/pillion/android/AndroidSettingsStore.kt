@@ -9,7 +9,16 @@ import app.pillion.core.ThemeMode
 
 /** [SettingsStore] backed by SharedPreferences. Single responsibility: persist preferences. */
 class AndroidSettingsStore(context: Context) : SettingsStore {
-    private val prefs = context.getSharedPreferences("pillion.settings", Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences("pillion.settings", Context.MODE_PRIVATE)
+
+    init {
+        MirrorViewportState.initialize(
+            appContext,
+            prefs.getInt(KEY_MIRROR_ZOOM, MirrorZoom.DEFAULT_PERCENT),
+            MirrorFocus.fromName(prefs.getString(KEY_MIRROR_FOCUS, null)),
+        )
+    }
 
     override fun themeMode(): ThemeMode =
         runCatching { ThemeMode.valueOf(prefs.getString(KEY_THEME, null) ?: ThemeMode.SYSTEM.name) }
@@ -36,14 +45,14 @@ class AndroidSettingsStore(context: Context) : SettingsStore {
         MirrorZoom.clamp(prefs.getInt(KEY_MIRROR_ZOOM, MirrorZoom.DEFAULT_PERCENT))
 
     override fun setMirrorZoomPercent(percent: Int) {
-        prefs.edit().putInt(KEY_MIRROR_ZOOM, MirrorZoom.clamp(percent)).apply()
+        MirrorViewportState.setZoom(appContext, percent)
     }
 
     override fun mirrorFocus(): MirrorFocus =
         MirrorFocus.fromName(prefs.getString(KEY_MIRROR_FOCUS, null))
 
     override fun setMirrorFocus(focus: MirrorFocus) {
-        prefs.edit().putString(KEY_MIRROR_FOCUS, focus.name).apply()
+        MirrorViewportState.setFocusPreset(appContext, focus)
     }
 
     override fun selectedBikeId(): String? = prefs.getString(KEY_BIKE, null)

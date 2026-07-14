@@ -94,7 +94,7 @@ android {
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 5
-        versionName = "0.2.3-tracer7-focus"
+        versionName = "0.2.4-tracer7-joystick"
     }
     // Exposes VERSION_NAME so AppInfo.VERSION reads the build's own version (not a hardcoded copy).
     buildFeatures {

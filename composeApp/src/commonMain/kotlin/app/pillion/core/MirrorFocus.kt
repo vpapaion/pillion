@@ -8,29 +8,25 @@ package app.pillion.core
  */
 enum class MirrorFocus(
     val label: String,
-    private val horizontal: CropAlignment,
-    private val vertical: CropAlignment,
+    val xPercent: Int,
+    val yPercent: Int,
 ) {
-    TOP_LEFT("Top left", CropAlignment.START, CropAlignment.START),
-    TOP_RIGHT("Top right", CropAlignment.END, CropAlignment.START),
-    CENTER("Center", CropAlignment.CENTER, CropAlignment.CENTER),
-    BOTTOM_LEFT("Bottom left", CropAlignment.START, CropAlignment.END),
-    BOTTOM_RIGHT("Bottom right", CropAlignment.END, CropAlignment.END),
+    TOP_LEFT("Top left", 0, 0),
+    TOP_RIGHT("Top right", 100, 0),
+    CENTER("Center", 50, 50),
+    BOTTOM_LEFT("Bottom left", 0, 100),
+    BOTTOM_RIGHT("Bottom right", 100, 100),
     ;
 
     fun cropLeft(fullWidth: Int, cropWidth: Int): Int =
-        cropStart(fullWidth, cropWidth, horizontal)
+        cropStart(fullWidth, cropWidth, xPercent)
 
     fun cropTop(fullHeight: Int, cropHeight: Int): Int =
-        cropStart(fullHeight, cropHeight, vertical)
+        cropStart(fullHeight, cropHeight, yPercent)
 
-    private fun cropStart(fullSize: Int, cropSize: Int, alignment: CropAlignment): Int {
+    private fun cropStart(fullSize: Int, cropSize: Int, percent: Int): Int {
         val remaining = (fullSize - cropSize).coerceAtLeast(0)
-        return when (alignment) {
-            CropAlignment.START -> 0
-            CropAlignment.CENTER -> remaining / 2
-            CropAlignment.END -> remaining
-        }
+        return (remaining * percent.coerceIn(0, 100) / 100f).toInt().coerceIn(0, remaining)
     }
 
     companion object {
@@ -42,5 +38,3 @@ enum class MirrorFocus(
             values().firstOrNull { it.name.equals(value, ignoreCase = true) }
     }
 }
-
-private enum class CropAlignment { START, CENTER, END }
