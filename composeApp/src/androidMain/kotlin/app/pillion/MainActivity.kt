@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -85,7 +86,16 @@ class MainActivity : ComponentActivity() {
             context = applicationContext,
             requestNotificationPermission = ::requestNotificationPermission,
         )
-        setContent { App(::controllerFor, updateChecker, settingsStore, dashSetup) }
+        setContent {
+            App(
+                controllerFor = ::controllerFor,
+                updateChecker = updateChecker,
+                settingsStore = settingsStore,
+                dashSetup = dashSetup,
+                googleMapsOverlaySupported = true,
+                onOpenNotificationAccess = ::openNotificationAccessSettings,
+            )
+        }
     }
 
     /** Resolve the [MirrorController] for the selected head unit (DIP — the UI doesn't know which). */
@@ -136,6 +146,14 @@ class MainActivity : ComponentActivity() {
     private fun requiredPermissions(): List<String> = buildList {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) add(Manifest.permission.BLUETOOTH_CONNECT)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun openNotificationAccessSettings() {
+        runCatching {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        }.onFailure {
+            startActivity(Intent(Settings.ACTION_SETTINGS))
+        }
     }
 
     private fun requestNotificationPermission() {

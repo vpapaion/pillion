@@ -50,6 +50,12 @@ class IosSettingsStore : SettingsStore {
         defaults.setObject(focus.name, forKey = MIRROR_FOCUS_KEY)
     }
 
+    override fun googleMapsOverlayEnabled(): Boolean = false
+
+    override fun setGoogleMapsOverlayEnabled(enabled: Boolean) {
+        // Android-only: iOS does not expose another app's navigation notification content.
+    }
+
     override fun selectedBikeId(): String? = defaults.stringForKey(BIKE_KEY)
 
     override fun setSelectedBikeId(id: String) {

@@ -36,6 +36,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -79,6 +80,10 @@ internal fun SettingsScreen(
     onMirrorZoomPercent: (Int) -> Unit = {},
     mirrorFocus: MirrorFocus = MirrorFocus.DEFAULT,
     onMirrorFocus: (MirrorFocus) -> Unit = {},
+    googleMapsOverlaySupported: Boolean = false,
+    googleMapsOverlayEnabled: Boolean = false,
+    onGoogleMapsOverlayEnabled: (Boolean) -> Unit = {},
+    onOpenNotificationAccess: () -> Unit = {},
     onSetUpDash: () -> Unit = {},
     onDisableDash: () -> Unit = {},
     bikeName: String = "",
@@ -222,6 +227,28 @@ internal fun SettingsScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 6.dp, top = 8.dp, end = 6.dp),
         )
+
+        if (googleMapsOverlaySupported) {
+            Spacer(Modifier.height(24.dp))
+            SectionHeader("Google Maps directions")
+            SettingsGroup {
+                GoogleMapsOverlaySetting(
+                    enabled = googleMapsOverlayEnabled,
+                    onEnabled = onGoogleMapsOverlayEnabled,
+                    onOpenNotificationAccess = onOpenNotificationAccess,
+                )
+            }
+            Text(
+                "When Google Maps has active turn-by-turn navigation, Pillion adds a large manoeuvre " +
+                    "arrow, distance and instruction on the left of the Tracer display. Notification " +
+                    "access is required only to read the current Google Maps instruction; the content " +
+                    "stays on this phone. The parser is experimental and may need adjustment after a " +
+                    "future Google Maps update.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 6.dp, top = 8.dp, end = 6.dp),
+            )
+        }
 
         if (dashSupported) {
             Spacer(Modifier.height(24.dp))
@@ -392,6 +419,47 @@ private fun MirrorFocusButton(
     } else {
         OutlinedButton(onClick = { onSelect(option) }, modifier = modifier, shape = RoundedCornerShape(12.dp)) {
             Text(label, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun GoogleMapsOverlaySetting(
+    enabled: Boolean,
+    onEnabled: (Boolean) -> Unit,
+    onOpenNotificationAccess: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onEnabled(!enabled) }.padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Large turn panel", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                if (enabled) "Enabled for active Google Maps navigation" else "Off",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = onEnabled)
+    }
+    if (enabled) {
+        GroupDivider()
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Notification access", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Allow Pillion, then return here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedButton(onClick = onOpenNotificationAccess, shape = RoundedCornerShape(12.dp)) {
+                Text("Open")
+            }
         }
     }
 }

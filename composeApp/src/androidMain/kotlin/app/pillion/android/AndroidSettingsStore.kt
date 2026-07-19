@@ -1,6 +1,9 @@
 package app.pillion.android
 
+import android.content.ComponentName
 import android.content.Context
+import android.os.Build
+import android.service.notification.NotificationListenerService
 import app.pillion.core.DashResolution
 import app.pillion.core.MirrorFocus
 import app.pillion.core.MirrorZoom
@@ -55,6 +58,21 @@ class AndroidSettingsStore(context: Context) : SettingsStore {
         MirrorViewportState.setFocusPreset(appContext, focus)
     }
 
+    override fun googleMapsOverlayEnabled(): Boolean =
+        prefs.getBoolean(KEY_GOOGLE_MAPS_OVERLAY, false)
+
+    override fun setGoogleMapsOverlayEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_GOOGLE_MAPS_OVERLAY, enabled).apply()
+        GoogleMapsNavigationState.refreshEnabled(appContext)
+        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            runCatching {
+                NotificationListenerService.requestRebind(
+                    ComponentName(appContext, GoogleMapsNavigationListenerService::class.java),
+                )
+            }
+        }
+    }
+
     override fun selectedBikeId(): String? = prefs.getString(KEY_BIKE, null)
 
     override fun setSelectedBikeId(id: String) {
@@ -67,6 +85,7 @@ class AndroidSettingsStore(context: Context) : SettingsStore {
         const val KEY_DASH_RESOLUTION = "dash_resolution"
         const val KEY_MIRROR_ZOOM = "mirror_zoom_percent"
         const val KEY_MIRROR_FOCUS = "mirror_focus"
+        const val KEY_GOOGLE_MAPS_OVERLAY = "google_maps_overlay_enabled"
         const val KEY_BIKE = "selected_bike_id"
     }
 }

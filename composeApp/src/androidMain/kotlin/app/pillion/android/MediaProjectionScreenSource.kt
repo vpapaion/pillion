@@ -53,6 +53,7 @@ class MediaProjectionScreenSource(
         textSize = 16f
         typeface = android.graphics.Typeface.DEFAULT_BOLD
     }
+    private val googleMapsOverlay = GoogleMapsOverlayRenderer(context)
 
     init {
         MirrorViewportState.initialize(context, zoomPercent, focus)
@@ -114,7 +115,8 @@ class MediaProjectionScreenSource(
         source.set(cropLeft, cropTop, cropLeft + cropWidth, cropTop + cropHeight)
 
         canvas.drawBitmap(bitmap, source, destination, imagePaint)
-        drawOverlay(viewport)
+        val mapsOverlayVisible = googleMapsOverlay.draw(canvas, WIDTH, HEIGHT)
+        drawOverlay(viewport, mapsOverlayVisible)
 
         return ByteArrayOutputStream().use { out ->
             output.compress(Bitmap.CompressFormat.JPEG, quality, out)
@@ -126,15 +128,16 @@ class MediaProjectionScreenSource(
         MirrorViewportState.cyclePreset(context, delta)
     }
 
-    private fun drawOverlay(viewport: MirrorViewportSnapshot) {
+    private fun drawOverlay(viewport: MirrorViewportSnapshot, mapsOverlayVisible: Boolean) {
         if (!viewport.overlayVisible()) return
         val text = viewport.message ?: return
         val padding = 8f
         val textWidth = overlayTextPaint.measureText(text)
+        val left = if (mapsOverlayVisible) 164f else 8f
         val top = 8f
         val bottom = top + 28f
-        canvas.drawRoundRect(8f, top, 8f + textWidth + padding * 2, bottom, 7f, 7f, overlayPaint)
-        canvas.drawText(text, 8f + padding, top + 20f, overlayTextPaint)
+        canvas.drawRoundRect(left, top, left + textWidth + padding * 2, bottom, 7f, 7f, overlayPaint)
+        canvas.drawText(text, left + padding, top + 20f, overlayTextPaint)
     }
 
     override fun stop() {

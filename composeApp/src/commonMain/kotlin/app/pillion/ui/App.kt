@@ -37,6 +37,8 @@ fun App(
     updateChecker: UpdateChecker? = null,
     settingsStore: SettingsStore? = null,
     dashSetup: DashSetup? = null,
+    googleMapsOverlaySupported: Boolean = false,
+    onOpenNotificationAccess: () -> Unit = {},
 ) {
     var themeMode by remember { mutableStateOf(settingsStore?.themeMode() ?: ThemeMode.SYSTEM) }
     PillionTheme(themeMode) {
@@ -67,6 +69,9 @@ fun App(
         }
         var mirrorFocus by remember {
             mutableStateOf(settingsStore?.mirrorFocus() ?: MirrorFocus.DEFAULT)
+        }
+        var googleMapsOverlayEnabled by remember {
+            mutableStateOf(settingsStore?.googleMapsOverlayEnabled() ?: false)
         }
         var showDisclaimer by rememberSaveable { mutableStateOf(true) }
         var update by remember { mutableStateOf<UpdateInfo?>(null) }
@@ -114,6 +119,14 @@ fun App(
                     mirrorFocus = it
                     settingsStore?.setMirrorFocus(it)
                 },
+                googleMapsOverlaySupported = googleMapsOverlaySupported,
+                googleMapsOverlayEnabled = googleMapsOverlayEnabled,
+                onGoogleMapsOverlayEnabled = { enabled ->
+                    googleMapsOverlayEnabled = enabled
+                    settingsStore?.setGoogleMapsOverlayEnabled(enabled)
+                    if (enabled) onOpenNotificationAccess()
+                },
+                onOpenNotificationAccess = onOpenNotificationAccess,
                 onSetUpDash = { showDashOnboarding = true },
                 onDisableDash = { dashEnabled = false; settingsStore?.setDashEnabled(false) },
                 bikeName = profile.displayName,

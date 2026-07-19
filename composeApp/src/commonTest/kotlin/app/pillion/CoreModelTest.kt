@@ -1,9 +1,11 @@
 package app.pillion
 
 import app.pillion.core.DashResolution
+import app.pillion.core.GoogleMapsDirectionParser
 import app.pillion.core.MirrorFocus
 import app.pillion.core.MirrorSettings
 import app.pillion.core.MirrorZoom
+import app.pillion.core.NavigationManeuver
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -59,4 +61,28 @@ class CoreModelTest {
         assertEquals(MirrorFocus.CENTER, MirrorFocus.fromName("unknown"))
         assertEquals(MirrorFocus.TOP_RIGHT, MirrorFocus.fromName("top_right"))
     }
+    @Test
+    fun google_maps_parser_extracts_english_turn_and_distance() {
+        val direction = GoogleMapsDirectionParser.parse(
+            listOf("Google Maps", "In 350 m", "Turn right onto Korinthou"),
+        )
+        assertEquals("350 m", direction?.distance)
+        assertEquals("Turn right onto Korinthou", direction?.instruction)
+        assertEquals(NavigationManeuver.RIGHT, direction?.maneuver)
+    }
+
+    @Test
+    fun google_maps_parser_understands_greek_navigation_text() {
+        val direction = GoogleMapsDirectionParser.parse(
+            listOf("Σε 1,2 χλμ.", "Στρίψτε αριστερά στη Νέα Εθνική Οδό"),
+        )
+        assertEquals("1,2 χλμ", direction?.distance)
+        assertEquals(NavigationManeuver.LEFT, direction?.maneuver)
+    }
+
+    @Test
+    fun google_maps_parser_ignores_non_navigation_notification() {
+        assertEquals(null, GoogleMapsDirectionParser.parse(listOf("Google Maps", "Location sharing is active")))
+    }
+
 }

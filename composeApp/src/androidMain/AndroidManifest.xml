@@ -81,6 +81,17 @@
             android:exported="false"
             android:foregroundServiceType="mediaProjection|connectedDevice" />
 
+        <!-- Optional local-only parser for Google Maps' ongoing navigation notification. -->
+        <service
+            android:name="app.pillion.android.GoogleMapsNavigationListenerService"
+            android:label="Pillion Google Maps directions"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <!-- SDL "Path B" (USB full-motion). The SDL session. -->
         <service
             android:name="app.pillion.android.sdl.SdlService"

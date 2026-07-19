@@ -15,6 +15,7 @@ import android.view.TextureView
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.TextView
+import app.pillion.android.GoogleMapsManeuverOverlayView
 import app.pillion.android.MirrorViewportSnapshot
 import app.pillion.android.MirrorViewportState
 import app.pillion.core.Logger
@@ -45,6 +46,13 @@ class ScreenMirrorDisplay(context: Context, display: Display) : SdlRemoteDisplay
                 FrameLayout.LayoutParams.MATCH_PARENT,
             ),
         )
+        root.addView(
+            GoogleMapsManeuverOverlayView(context),
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
         status = TextView(context).apply {
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.argb(190, 0, 0, 0))
@@ -57,7 +65,7 @@ class ScreenMirrorDisplay(context: Context, display: Display) : SdlRemoteDisplay
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.START,
+                Gravity.TOP or Gravity.END,
             ).apply { setMargins(8, 8, 8, 8) },
         )
         setContentView(root)
