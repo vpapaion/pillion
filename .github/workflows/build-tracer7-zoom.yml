@@ -22,6 +22,17 @@ jobs:
         with:
           ref: ${{ github.head_ref || github.ref_name }}
 
+      - name: Pack current source
+        run: tar --exclude=.git -czf /tmp/Pillion-current-source.tar.gz .
+
+      - name: Upload current source
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pillion-current-source
+          path: /tmp/Pillion-current-source.tar.gz
+          if-no-files-found: error
+          retention-days: 2
+
       - name: Apply pending joystick feature source patch
         run: |
           if [ -f .github/joystick-feature.patch.gz ]; then
