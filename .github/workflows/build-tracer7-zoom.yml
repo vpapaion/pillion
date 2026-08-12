@@ -1,4 +1,4 @@
-name: Build Pillion Bluetooth Screen-Off APK
+name: Build Pillion Google Maps Diagnostic APK
 
 on:
   workflow_dispatch:
@@ -43,12 +43,12 @@ jobs:
           ./gradlew --stacktrace :composeApp:testDebugUnitTest :composeApp:assembleDebug
 
       - name: Name APK
-        run: cp composeApp/build/outputs/apk/debug/composeApp-debug.apk Pillion-Zoom-Tracer7-Screen-Off.apk
+        run: cp composeApp/build/outputs/apk/debug/composeApp-debug.apk Pillion-Zoom-Tracer7-Maps-Diagnostic.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Pillion-Zoom-Tracer7-Screen-Off
-          path: Pillion-Zoom-Tracer7-Screen-Off.apk
+          name: Pillion-Zoom-Tracer7-Maps-Diagnostic
+          path: Pillion-Zoom-Tracer7-Maps-Diagnostic.apk
           if-no-files-found: error
           retention-days: 30
