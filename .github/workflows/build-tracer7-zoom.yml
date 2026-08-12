@@ -72,3 +72,4 @@ jobs:
           path: Pillion-Zoom-Tracer7-Screen-Off.apk
           if-no-files-found: error
           retention-days: 30
+          # Bluetooth-only screen-off test build; no ADB/Wi-Fi setup is required for the Tracer profile.
