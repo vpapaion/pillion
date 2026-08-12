@@ -28,6 +28,10 @@ interface SettingsStore {
     fun googleMapsOverlayEnabled(): Boolean
     fun setGoogleMapsOverlayEnabled(enabled: Boolean)
 
+    /** Keep Google Maps turn directions streaming over Bluetooth while the phone display is off. */
+    fun screenOffDirectionsEnabled(): Boolean
+    fun setScreenOffDirectionsEnabled(enabled: Boolean)
+
     /** The head-unit the user picked at onboarding ([app.pillion.core.headunit.HeadUnitProfile.id]),
      *  or null if they haven't chosen yet (→ show the bike-selection screen). */
     fun selectedBikeId(): String?

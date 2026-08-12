@@ -93,8 +93,8 @@ android {
         applicationId = "app.pillion.tracer7zoom"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 6
-        versionName = "0.2.5-tracer7-google-maps"
+        versionCode = 7
+        versionName = "0.2.6-tracer7-screen-off"
     }
     // Exposes VERSION_NAME so AppInfo.VERSION reads the build's own version (not a hardcoded copy).
     buildFeatures {

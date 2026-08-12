@@ -83,6 +83,8 @@ internal fun SettingsScreen(
     googleMapsOverlaySupported: Boolean = false,
     googleMapsOverlayEnabled: Boolean = false,
     onGoogleMapsOverlayEnabled: (Boolean) -> Unit = {},
+    screenOffDirectionsEnabled: Boolean = false,
+    onScreenOffDirectionsEnabled: (Boolean) -> Unit = {},
     onOpenNotificationAccess: () -> Unit = {},
     onSetUpDash: () -> Unit = {},
     onDisableDash: () -> Unit = {},
@@ -220,9 +222,7 @@ internal fun SettingsScreen(
                 "on a fast phone). The cap keeps the frame rate down to save battery and reduce heat. " +
                 "Zoom enlarges maps and text by cropping the outer edges. Visible area chooses which " +
                 "part of the app remains on the Tracer 7 display: a corner or the centre. 100% shows " +
-                "the complete phone image, while 160–180% gives a much larger close-up. On compatible " +
-                "dashboards, joystick directions move the crop, OK recentres it, and navigation zoom " +
-                "buttons change zoom. NaviLite zoom buttons cycle through the five crop presets.",
+                "the complete phone image, while 160–180% gives a much larger close-up.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 6.dp, top = 8.dp, end = 6.dp),
@@ -237,13 +237,20 @@ internal fun SettingsScreen(
                     onEnabled = onGoogleMapsOverlayEnabled,
                     onOpenNotificationAccess = onOpenNotificationAccess,
                 )
+                GroupDivider()
+                ScreenOffDirectionsSetting(
+                    enabled = screenOffDirectionsEnabled,
+                    onEnabled = onScreenOffDirectionsEnabled,
+                )
             }
             Text(
                 "When Google Maps has active turn-by-turn navigation, Pillion adds a large manoeuvre " +
                     "arrow, distance and instruction on the left of the Tracer display. Notification " +
                     "access is required only to read the current Google Maps instruction; the content " +
-                    "stays on this phone. The parser is experimental and may need adjustment after a " +
-                    "future Google Maps update.",
+                    "stays on this phone. Screen-off mode keeps the turn card streaming over the same " +
+                    "Bluetooth connection when the phone display is off — no Wi-Fi, ADB pairing or " +
+                    "Wireless Debugging is used. The parser is experimental and may need adjustment " +
+                    "after a future Google Maps update.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 6.dp, top = 8.dp, end = 6.dp),
@@ -461,6 +468,28 @@ private fun GoogleMapsOverlaySetting(
                 Text("Open")
             }
         }
+    }
+}
+
+
+@Composable
+private fun ScreenOffDirectionsSetting(
+    enabled: Boolean,
+    onEnabled: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onEnabled(!enabled) }.padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Keep directions with screen off", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                if (enabled) "Bluetooth-only screen-off turn card" else "Off",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = onEnabled)
     }
 }
 

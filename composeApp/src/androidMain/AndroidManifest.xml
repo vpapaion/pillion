@@ -6,23 +6,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Required by the SDL router service (its integration validator aborts without it). -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Wireless-debugging setup: keep mDNS visible while discovering adb's pairing port. -->
-    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-
-    <!-- Dash mode: find which app to promote when the screen is blocked (the foreground app).
-         Special access, granted by the user in Settings → Usage access. -->
-    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
-        tools:ignore="ProtectedPermissions" />
-    <!-- Dash mode: resolve the foreground app's launcher activity to promote it. Without this,
-         Android 11+ package visibility hides other apps and getLaunchIntentForPackage() returns
-         null even for an app UsageStats just reported (e.g. Maps), so nothing gets promoted. -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
-        tools:ignore="QueryAllPackagesPermission" />
-    <!-- Dash mode: listen for real keyguard unlocks so the app returns from the virtual display
-         even when screen-power broadcasts are swallowed by panel-off APIs. -->
-    <uses-permission android:name="android.permission.SUBSCRIBE_TO_KEYGUARD_LOCKED_STATE"
-        tools:ignore="ProtectedPermissions" />
-
     <!-- Bluetooth: connect to the already-bonded dash (no scanning needed).
          NOTE: BLUETOOTH has NO maxSdkVersion — SDL's IntegrationValidator requires it unconditionally
          (even on API 31+), or the SdlRouterService crashes on the USB path. -->
@@ -43,7 +26,7 @@
     <!-- Foreground service hosting MediaProjection screen capture -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
-    <!-- Dedicated-dash mode streams to the Bluetooth dash with no MediaProjection. -->
+    <!-- Bluetooth/SDL foreground transport and screen-off navigation streaming. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -64,17 +47,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- Dev-only: in-app ADB bootstrap proof (Milestone 1). Launch via:
-             adb shell am start -n <application-id>/app.pillion.android.AdbBootstrapActivity -->
-        <activity
-            android:name="app.pillion.android.AdbBootstrapActivity"
-            android:exported="true"
-            android:label="Pillion ADB setup (dev)" />
-
-        <receiver
-            android:name="app.pillion.android.AdbPairingCodeReceiver"
-            android:exported="false" />
 
         <service
             android:name="app.pillion.android.CaptureService"

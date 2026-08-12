@@ -70,7 +70,16 @@ class CaptureService : Service() {
         val mirrorFocus = MirrorFocus.fromName(intent?.getStringExtra(EXTRA_MIRROR_FOCUS))
         val dashResolution = dashResolutionFrom(intent)
         dashEnabled = intent?.getBooleanExtra(EXTRA_DASH_ENABLED, false) ?: false
-        startSession(quality, maxFps, dashResolution, zoomPercent, mirrorFocus)
+        val screenOffDirectionsEnabled =
+            intent?.getBooleanExtra(EXTRA_SCREEN_OFF_DIRECTIONS_ENABLED, false) ?: false
+        startSession(
+            quality,
+            maxFps,
+            dashResolution,
+            zoomPercent,
+            mirrorFocus,
+            screenOffDirectionsEnabled,
+        )
         return START_NOT_STICKY
     }
 
@@ -86,6 +95,7 @@ class CaptureService : Service() {
         dashResolution: DashResolution,
         zoomPercent: Int,
         mirrorFocus: MirrorFocus,
+        screenOffDirectionsEnabled: Boolean,
     ) {
         // A screen-capture grant is single-use. If it's missing or stale (e.g. cleared when the app
         // crashed + restarted), starting a mediaProjection foreground service throws SecurityException
@@ -115,7 +125,14 @@ class CaptureService : Service() {
         val mirror = MediaProjectionScreenSource(this, projection, quality, zoomPercent, mirrorFocus)
         runCatching { mirror.start() }
 
-        val source: ScreenSource = if (dashEnabled) {
+        val source: ScreenSource = if (screenOffDirectionsEnabled) {
+            Log.d(TAG, "screen-off directions: Bluetooth-only mode enabled")
+            ScreenOffGoogleMapsScreenSource(
+                context = this,
+                mirror = mirror,
+                quality = maxOf(quality, 65),
+            )
+        } else if (dashEnabled) {
             val switch = SwitchableScreenSource(
                 mirror,
                 DashStreamScreenSource(this, overlayQuality = maxOf(quality, 65)),
@@ -474,6 +491,7 @@ class CaptureService : Service() {
         const val EXTRA_DASH_HEIGHT = "dashHeight"
         const val EXTRA_MIRROR_ZOOM = "mirrorZoomPercent"
         const val EXTRA_MIRROR_FOCUS = "mirrorFocus"
+        const val EXTRA_SCREEN_OFF_DIRECTIONS_ENABLED = "screenOffDirectionsEnabled"
 
         // Handed over by the Activity after the user grants screen capture.
         @Volatile var resultCode: Int = 0

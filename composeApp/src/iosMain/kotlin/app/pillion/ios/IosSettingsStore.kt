@@ -56,6 +56,12 @@ class IosSettingsStore : SettingsStore {
         // Android-only: iOS does not expose another app's navigation notification content.
     }
 
+    override fun screenOffDirectionsEnabled(): Boolean = false
+
+    override fun setScreenOffDirectionsEnabled(enabled: Boolean) {
+        // Android/Tracer 7 only: iOS cannot read another app's navigation notification.
+    }
+
     override fun selectedBikeId(): String? = defaults.stringForKey(BIKE_KEY)
 
     override fun setSelectedBikeId(id: String) {

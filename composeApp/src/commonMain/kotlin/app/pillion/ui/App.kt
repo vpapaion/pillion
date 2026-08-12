@@ -73,6 +73,9 @@ fun App(
         var googleMapsOverlayEnabled by remember {
             mutableStateOf(settingsStore?.googleMapsOverlayEnabled() ?: false)
         }
+        var screenOffDirectionsEnabled by remember {
+            mutableStateOf(settingsStore?.screenOffDirectionsEnabled() ?: false)
+        }
         var showDisclaimer by rememberSaveable { mutableStateOf(true) }
         var update by remember { mutableStateOf<UpdateInfo?>(null) }
         var updateDismissed by rememberSaveable { mutableStateOf(false) }
@@ -124,7 +127,21 @@ fun App(
                 onGoogleMapsOverlayEnabled = { enabled ->
                     googleMapsOverlayEnabled = enabled
                     settingsStore?.setGoogleMapsOverlayEnabled(enabled)
-                    if (enabled) onOpenNotificationAccess()
+                    if (enabled) {
+                        onOpenNotificationAccess()
+                    } else if (screenOffDirectionsEnabled) {
+                        screenOffDirectionsEnabled = false
+                        settingsStore?.setScreenOffDirectionsEnabled(false)
+                    }
+                },
+                screenOffDirectionsEnabled = screenOffDirectionsEnabled,
+                onScreenOffDirectionsEnabled = { enabled ->
+                    screenOffDirectionsEnabled = enabled
+                    settingsStore?.setScreenOffDirectionsEnabled(enabled)
+                    if (enabled) {
+                        googleMapsOverlayEnabled = true
+                        onOpenNotificationAccess()
+                    }
                 },
                 onOpenNotificationAccess = onOpenNotificationAccess,
                 onSetUpDash = { showDashOnboarding = true },

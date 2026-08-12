@@ -73,6 +73,14 @@ class AndroidSettingsStore(context: Context) : SettingsStore {
         }
     }
 
+    override fun screenOffDirectionsEnabled(): Boolean =
+        prefs.getBoolean(KEY_SCREEN_OFF_DIRECTIONS, false)
+
+    override fun setScreenOffDirectionsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SCREEN_OFF_DIRECTIONS, enabled).apply()
+        if (enabled) setGoogleMapsOverlayEnabled(true)
+    }
+
     override fun selectedBikeId(): String? = prefs.getString(KEY_BIKE, null)
 
     override fun setSelectedBikeId(id: String) {
@@ -86,6 +94,7 @@ class AndroidSettingsStore(context: Context) : SettingsStore {
         const val KEY_MIRROR_ZOOM = "mirror_zoom_percent"
         const val KEY_MIRROR_FOCUS = "mirror_focus"
         const val KEY_GOOGLE_MAPS_OVERLAY = "google_maps_overlay_enabled"
+        const val KEY_SCREEN_OFF_DIRECTIONS = "screen_off_directions_enabled"
         const val KEY_BIKE = "selected_bike_id"
     }
 }

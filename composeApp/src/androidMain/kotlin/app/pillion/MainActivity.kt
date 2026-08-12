@@ -10,10 +10,8 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import app.pillion.android.AndroidDashSetup
 import app.pillion.android.AndroidMirrorController
 import app.pillion.android.AndroidSettingsStore
-import app.pillion.android.AdbPairingCoordinator
 import app.pillion.android.CaptureService
 import app.pillion.android.GitHubUpdateChecker
 import app.pillion.android.SdlMirrorController
@@ -55,7 +53,11 @@ class MainActivity : ComponentActivity() {
                 val intent = Intent(this, CaptureService::class.java)
                     .putExtra(CaptureService.EXTRA_QUALITY, pendingSettings.quality)
                     .putExtra(CaptureService.EXTRA_MAX_FPS, pendingSettings.maxFps)
-                    .putExtra(CaptureService.EXTRA_DASH_ENABLED, settingsStore.dashEnabled())
+                    .putExtra(CaptureService.EXTRA_DASH_ENABLED, false)
+                    .putExtra(
+                        CaptureService.EXTRA_SCREEN_OFF_DIRECTIONS_ENABLED,
+                        settingsStore.screenOffDirectionsEnabled(),
+                    )
                     .putExtra(CaptureService.EXTRA_DASH_WIDTH, pendingSettings.dashResolution.width)
                     .putExtra(CaptureService.EXTRA_DASH_HEIGHT, pendingSettings.dashResolution.height)
                     .putExtra(CaptureService.EXTRA_MIRROR_ZOOM, pendingSettings.zoomPercent)
@@ -72,26 +74,16 @@ class MainActivity : ComponentActivity() {
         if (granted.values.all { it }) requestProjection()
     }
 
-    private val notificationPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted) AdbPairingCoordinator.start(applicationContext)
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         registerBuiltInHeadUnits()
         val updateChecker = GitHubUpdateChecker(AppInfo.REPO)
-        val dashSetup = AndroidDashSetup(
-            context = applicationContext,
-            requestNotificationPermission = ::requestNotificationPermission,
-        )
         setContent {
             App(
                 controllerFor = ::controllerFor,
                 updateChecker = updateChecker,
                 settingsStore = settingsStore,
-                dashSetup = dashSetup,
+                dashSetup = null,
                 googleMapsOverlaySupported = true,
                 onOpenNotificationAccess = ::openNotificationAccessSettings,
             )
@@ -156,11 +148,5 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
+
 }
