@@ -14,8 +14,7 @@ import java.io.ByteArrayOutputStream
 /**
  * Keeps the Bluetooth/NaviLite stream useful after the phone display turns off without ADB, Wi-Fi,
  * or a virtual display. While the phone is interactive this delegates to normal MediaProjection.
- * While the phone display is off it sends a locally-rendered 480x240 Google Maps directions card
- * built from [GoogleMapsNavigationListenerService].
+ * While the phone display is off it sends a locally-rendered 480x240 Google Maps directions card.
  */
 class ScreenOffGoogleMapsScreenSource(
     context: Context,
@@ -64,7 +63,10 @@ class ScreenOffGoogleMapsScreenSource(
 
     private fun screenOffFrame(): ByteArray {
         val direction = GoogleMapsNavigationState.snapshot(appContext)
-        val signature = direction?.let { "${it.maneuver}|${it.distance}|${it.instruction}" } ?: "waiting"
+        val debug = GoogleMapsNavigationState.debugSnapshot()
+        val debugText = debug.lines.take(3).joinToString("|")
+        val signature = direction?.let { "${it.maneuver}|${it.distance}|${it.instruction}" }
+            ?: "${debug.seen}|${debug.ongoing}|${debug.note}|$debugText"
         val cached = cachedScreenOffFrame
         if (cached != null && signature == lastDirectionSignature) return cached
 
@@ -73,19 +75,31 @@ class ScreenOffGoogleMapsScreenSource(
 
         val rightX = 170f
         labelPaint.textSize = 12f
-        canvas.drawText("PILLION • SCREEN OFF", rightX, 28f, labelPaint)
+        canvas.drawText("PILLION • SCREEN OFF • 0.2.7", rightX, 26f, labelPaint)
         if (panelDrawn && direction != null) {
             titlePaint.textSize = 19f
-            drawWrapped(direction.instruction, rightX, 62f, 292f, 3, titlePaint, 25f)
+            drawWrapped(direction.instruction, rightX, 60f, 292f, 4, titlePaint, 24f)
             detailPaint.textSize = 12f
             canvas.drawText("Google Maps directions via Bluetooth", rightX, 218f, detailPaint)
         } else {
-            titlePaint.textSize = 19f
-            canvas.drawText("Waiting for", rightX, 88f, titlePaint)
-            canvas.drawText("Google Maps navigation", rightX, 116f, titlePaint)
-            detailPaint.textSize = 12f
-            canvas.drawText("Start a route in Google Maps.", rightX, 154f, detailPaint)
-            canvas.drawText("The phone display may stay off.", rightX, 174f, detailPaint)
+            titlePaint.textSize = 17f
+            canvas.drawText(if (debug.seen) "Maps notification detected" else "Waiting for Google Maps", rightX, 54f, titlePaint)
+            detailPaint.textSize = 11f
+            drawWrapped(debug.note, rightX, 78f, 296f, 2, detailPaint, 16f)
+            if (debug.lines.isNotEmpty()) {
+                labelPaint.textSize = 10f
+                canvas.drawText("RAW MAPS TEXT:", rightX, 116f, labelPaint)
+                detailPaint.textSize = 10f
+                var y = 132f
+                debug.lines.take(3).forEach { line ->
+                    y = drawWrappedReturningY(line, rightX, y, 296f, 2, detailPaint, 14f)
+                    y += 3f
+                }
+            } else {
+                detailPaint.textSize = 11f
+                canvas.drawText("Check Notification access for Pillion Zoom.", rightX, 132f, detailPaint)
+                canvas.drawText("Then start an active route in Google Maps.", rightX, 150f, detailPaint)
+            }
         }
 
         val encoded = ByteArrayOutputStream().use { out ->
@@ -106,8 +120,20 @@ class ScreenOffGoogleMapsScreenSource(
         paint: Paint,
         lineHeight: Float,
     ) {
+        drawWrappedReturningY(text, x, firstBaseline, maxWidth, maxLines, paint, lineHeight)
+    }
+
+    private fun drawWrappedReturningY(
+        text: String,
+        x: Float,
+        firstBaseline: Float,
+        maxWidth: Float,
+        maxLines: Int,
+        paint: Paint,
+        lineHeight: Float,
+    ): Float {
         val words = text.split(Regex("\\s+")).filter { it.isNotBlank() }
-        if (words.isEmpty()) return
+        if (words.isEmpty()) return firstBaseline
         val lines = mutableListOf<String>()
         var current = ""
         for (word in words) {
@@ -126,6 +152,7 @@ class ScreenOffGoogleMapsScreenSource(
             canvas.drawText(line, x, y, paint)
             y += lineHeight
         }
+        return y
     }
 
     override fun cycleCropPreset(delta: Int) {
