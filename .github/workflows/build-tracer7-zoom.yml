@@ -1,4 +1,4 @@
-name: Build Pillion Google Maps Overlay APK
+name: Build Pillion Bluetooth Screen-Off APK
 
 on:
   workflow_dispatch:
@@ -22,24 +22,13 @@ jobs:
         with:
           ref: ${{ github.head_ref || github.ref_name }}
 
-      - name: Pack current source
-        run: tar --exclude=.git -czf /tmp/Pillion-current-screenoff-source.tar.gz .
-
-      - name: Upload current source
-        uses: actions/upload-artifact@v4
-        with:
-          name: Pillion-current-screenoff-source
-          path: /tmp/Pillion-current-screenoff-source.tar.gz
-          if-no-files-found: error
-          retention-days: 2
-
-      - name: Apply pending Google Maps overlay patch
+      - name: Apply pending Bluetooth screen-off patch
         run: |
-          if [ -f .github/google-maps-feature.patch.b64 ]; then
-            base64 -d .github/google-maps-feature.patch.b64 > /tmp/google-maps-feature.patch.gz
-            gzip -dc /tmp/google-maps-feature.patch.gz | git apply --check
-            gzip -dc /tmp/google-maps-feature.patch.gz | git apply
-            rm .github/google-maps-feature.patch.b64
+          if [ -f .github/screenoff-feature.patch.b64 ]; then
+            base64 -d .github/screenoff-feature.patch.b64 > /tmp/screenoff-feature.patch.gz
+            gzip -dc /tmp/screenoff-feature.patch.gz | git apply --check
+            gzip -dc /tmp/screenoff-feature.patch.gz | git apply
+            rm .github/screenoff-feature.patch.b64
           fi
 
       - name: Set up JDK 17
@@ -69,17 +58,17 @@ jobs:
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add -A
             git diff --cached --check
-            git commit -m 'feat(android): add Google Maps turn overlay [skip ci]'
+            git commit -m 'feat(android): add Bluetooth screen-off directions [skip ci]'
             git push origin HEAD:${{ github.head_ref || github.ref_name }}
           fi
 
       - name: Name APK
-        run: cp composeApp/build/outputs/apk/debug/composeApp-debug.apk Pillion-Zoom-Tracer7-Google-Maps.apk
+        run: cp composeApp/build/outputs/apk/debug/composeApp-debug.apk Pillion-Zoom-Tracer7-Screen-Off.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Pillion-Zoom-Tracer7-Google-Maps
-          path: Pillion-Zoom-Tracer7-Google-Maps.apk
+          name: Pillion-Zoom-Tracer7-Screen-Off
+          path: Pillion-Zoom-Tracer7-Screen-Off.apk
           if-no-files-found: error
           retention-days: 30
