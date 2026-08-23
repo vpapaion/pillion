@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.KeyguardManager
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
@@ -50,11 +51,17 @@ class CaptureService : Service() {
     private var keyguardListener: Any? = null
     @Volatile private var dashPromotedAtMs = 0L
     @Volatile private var dashSawLockedKeyguard = false
+    /** True while the helper is holding the phone's panel off for screen-off mirroring. */
+    @Volatile private var panelBlanked = false
+    @Volatile private var panelBlankedAtMs = 0L
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> { stopSelf(); return START_NOT_STICKY }
+            // Notification actions: arm/disarm screen-off mirroring on a live session. They must not
+            // fall through to startSession() — that would try to reuse a spent projection grant.
+            ACTION_BLANK -> { blankPhoneScreen("notification action"); return START_NOT_STICKY }
+            ACTION_UNBLANK -> { unblankPhoneScreen("notification action"); return START_NOT_STICKY }
         }
         acquireWakeLock()
         _state.value = MirrorState.Connecting
@@ -143,6 +150,16 @@ class CaptureService : Service() {
                 scope.launch(Dispatchers.IO) {
                     when (action) {
                         Intent.ACTION_SCREEN_OFF -> {
+                            if (panelBlanked) {
+                                // The panel was already dark, so this is a *real* screen-off: the user
+                                // pressed power and the system is genuinely going to sleep. Give the
+                                // panel its normal power mode back (otherwise the next press shows a
+                                // dead screen) and let the dedicated-dash path below take over.
+                                Log.i(TAG, "panel: real screen-off while blanked — disarming")
+                                panelBlanked = false
+                                panelBlankedAtMs = 0L
+                                runCatching { dashSwitch?.unblank() }
+                            }
                             if (dashPromotedAtMs != 0L) {
                                 Log.d(TAG, "dash: screen off while already promoted; keeping dash active")
                                 return@launch
@@ -150,15 +167,32 @@ class CaptureService : Service() {
                             val component = foregroundComponent()
                             Log.d(TAG, "dash: screen off; foreground=$component")
                             if (component == null) {
-                                Log.w(TAG, "dash: no foreground app; usage access may be missing")
+                                // No launchable foreground app to promote (usage access missing, or
+                                // the app has no launcher activity). Rather than freeze, keep
+                                // mirroring and just blank the panel.
+                                Log.w(TAG, "dash: no foreground app; falling back to screen-off mirroring")
+                                blankPhoneScreen("no foreground app to promote")
                             } else {
                                 dashSwitch?.promote(component)
                                 dashPromotedAtMs = System.currentTimeMillis()
                                 dashSawLockedKeyguard = isKeyguardLockedNow()
                                 scheduleLockStateSample(dashPromotedAtMs)
+                                scheduleDashFallback(dashPromotedAtMs)
                             }
                         }
                         Intent.ACTION_SCREEN_ON -> {
+                            // Blanking wakes display 0 first (it may have been dozing), which echoes
+                            // back as SCREEN_ON. Ignore that self-inflicted wake; a later one means
+                            // the blank didn't take, so stop pretending the phone is off.
+                            if (panelBlanked) {
+                                val age = System.currentTimeMillis() - panelBlankedAtMs
+                                if (age >= BLANK_WAKE_GRACE_MS) {
+                                    Log.w(TAG, "panel: screen came back on (${age}ms) — disarming screen-off")
+                                    unblankPhoneScreen("screen on")
+                                } else {
+                                    Log.d(TAG, "panel: ignoring blank wake (${age}ms)")
+                                }
+                            }
                             val promotedAt = dashPromotedAtMs
                             if (promotedAt != 0L) {
                                 val ageMs = System.currentTimeMillis() - promotedAt
@@ -173,6 +207,7 @@ class CaptureService : Service() {
                             }
                         }
                         Intent.ACTION_USER_PRESENT -> {
+                            unblankPhoneScreen("user present")
                             returnToPhone("user present", force = true)
                         }
                     }
@@ -286,6 +321,63 @@ class CaptureService : Service() {
         }
     }
 
+    /**
+     * **Screen-off mirroring.** Ask the helper to blank the phone's panel while keeping display 0
+     * awake, so MediaProjection keeps producing frames and the dash keeps updating with the phone
+     * dark. A plain screen-off cannot do this: the system stops composing display 0, the mirror's
+     * ImageReader goes silent, and the engine keeps re-sending the last captured frame — the dash
+     * looks connected but frozen, which is the bug this fixes.
+     */
+    private fun blankPhoneScreen(reason: String) {
+        val switch = dashSwitch ?: run {
+            Log.w(TAG, "panel: screen-off requested ($reason) but the dash helper isn't running")
+            updateNotification("Screen-off needs dash setup")
+            return
+        }
+        panelBlanked = true
+        panelBlankedAtMs = System.currentTimeMillis()
+        Log.i(TAG, "panel: arming screen-off mirroring ($reason)")
+        scope.launch(Dispatchers.IO) { runCatching { switch.blank() } }
+        updateNotification("Phone screen off — still mirroring")
+    }
+
+    /** Give the phone's panel back. Safe to call when it was never blanked. */
+    private fun unblankPhoneScreen(reason: String) {
+        if (!panelBlanked) return
+        panelBlanked = false
+        panelBlankedAtMs = 0L
+        Log.i(TAG, "panel: restoring phone screen ($reason)")
+        val switch = dashSwitch ?: return
+        scope.launch(Dispatchers.IO) { runCatching { switch.unblank() } }
+        updateNotification("Streaming")
+    }
+
+    /**
+     * The dedicated dash can fail silently: `am display move-stack` reports success while a
+     * singleTask/singleInstance app (Google Maps mid-navigation) stays on display 0, or the trusted
+     * display was never created on this build. Either way no frames arrive and the dash freezes. So
+     * check whether real frames showed up, and if not, put the app back on the phone and blank the
+     * panel instead — screen-off mirroring works regardless of the app's launch mode.
+     */
+    private fun scheduleDashFallback(promotedAt: Long) {
+        scope.launch(Dispatchers.IO) {
+            Thread.sleep(DASH_FALLBACK_MS)
+            if (dashPromotedAtMs != promotedAt) return@launch
+            val switch = dashSwitch ?: return@launch
+            if (switch.isDashFresh()) return@launch
+            Log.w(
+                TAG,
+                "dash: no dash frames ${DASH_FALLBACK_MS}ms after promote — " +
+                    "falling back to screen-off mirroring",
+            )
+            switch.demote()
+            dashPromotedAtMs = 0L
+            dashSawLockedKeyguard = false
+            Thread.sleep(DEMOTE_SETTLE_MS) // let the task land back on display 0 before blanking
+            blankPhoneScreen("dash produced no frames")
+        }
+    }
+
     private fun returnToPhone(reason: String, force: Boolean = false) {
         if (!force && dashPromotedAtMs == 0L) return
         Log.d(TAG, "dash: $reason; returning to phone")
@@ -375,7 +467,13 @@ class CaptureService : Service() {
         // loopback — works with no network — to release the trusted display; pkill over ADB is a
         // best-effort backup (only reachable while wifi is up). Detached thread: must outlive cancel().
         val switch = dashSwitch
+        val wasBlanked = panelBlanked
+        panelBlanked = false
         if (dashEnabled) Thread {
+            // Restore the panel BEFORE tearing the helper down, so a session that ends while the
+            // phone is dark can never leave it dark. (The helper also unblanks on QUIT and when its
+            // last client drops — belt and braces, because a black phone is unrecoverable-looking.)
+            if (wasBlanked) runCatching { switch?.unblank() }
             runCatching { switch?.quit() }
             killHelper()
         }.start()
@@ -412,28 +510,49 @@ class CaptureService : Service() {
         }
     }
 
+    @Suppress("DEPRECATION") // Notification.Builder(Context) and addAction(int, ...) for minSdk 24
     private fun buildNotification(text: String): Notification {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel(CHANNEL_ID, "Pillion", NotificationManager.IMPORTANCE_LOW),
             )
             Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("Pillion — mirroring to dash")
-                .setContentText(text)
-                .setSmallIcon(android.R.drawable.ic_menu_share)
-                .build()
         } else {
-            @Suppress("DEPRECATION")
             Notification.Builder(this)
-                .setContentTitle("Pillion — mirroring to dash")
-                .setContentText(text)
-                .setSmallIcon(android.R.drawable.ic_menu_share)
-                .build()
         }
+        builder.setContentTitle("Pillion — mirroring to dash")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_menu_share)
+            .setOngoing(true)
+        // The whole point of the feature lives here: you start the ride with the screen on (to open
+        // Waze), then turn the phone dark from the shade without killing the stream.
+        if (panelBlanked) {
+            builder.addAction(
+                android.R.drawable.ic_menu_view, "Screen on", serviceAction(ACTION_UNBLANK),
+            )
+        } else {
+            builder.addAction(
+                android.R.drawable.ic_lock_idle_lock, "Screen off", serviceAction(ACTION_BLANK),
+            )
+        }
+        builder.addAction(
+            android.R.drawable.ic_menu_close_clear_cancel, "Stop", serviceAction(ACTION_STOP),
+        )
+        return builder.build()
+    }
+
+    private fun serviceAction(action: String): PendingIntent {
+        val intent = Intent(this, CaptureService::class.java).setAction(action)
+        return PendingIntent.getService(
+            this,
+            action.hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     private fun updateNotification(text: String) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        runCatching {
             getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(text))
         }
     }
@@ -444,10 +563,18 @@ class CaptureService : Service() {
         private const val TAG = "Pillion"
         private const val MAX_SESSION_MS = 3L * 60 * 60 * 1000 // 3h safety cap
         private const val RETURN_TO_PHONE_GRACE_MS = 3_000L
+        /** Ignore the SCREEN_ON echo caused by waking display 0 just before blanking it. */
+        private const val BLANK_WAKE_GRACE_MS = 3_000L
+        /** How long the dedicated dash gets to deliver a frame before we fall back to blanking. */
+        private const val DASH_FALLBACK_MS = 3_000L
+        private const val DEMOTE_SETTLE_MS = 400L
         private const val LOCK_STATE_SAMPLE_DELAY_MS = 250L
         private const val PERMISSION_SUBSCRIBE_KEYGUARD =
             "android.permission.SUBSCRIBE_TO_KEYGUARD_LOCKED_STATE"
         const val ACTION_STOP = "app.pillion.action.STOP"
+        /** Blank the phone's panel while the mirror keeps running (notification action). */
+        const val ACTION_BLANK = "app.pillion.action.BLANK"
+        const val ACTION_UNBLANK = "app.pillion.action.UNBLANK"
         const val EXTRA_QUALITY = "quality"
         const val EXTRA_MAX_FPS = "maxFps"
         /** When true, the session switches to the dedicated dash display whenever the phone is locked. */

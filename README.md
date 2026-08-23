@@ -67,6 +67,22 @@ reports, and how to add yours. **More reports welcome!**
 > Note: only run **one** projection app at a time — close Garmin StreetCross / Yamaha MyRide first,
 > or they'll fight Pillion for the connection.
 
+## Riding with the phone screen off
+
+Keeping the phone lit for a whole ride cooks it and eats the battery, but a plain screen-off freezes
+the dash: Android stops composing the phone's display, so screen capture has nothing left to send.
+
+Pillion works around this with the same privileged helper the dedicated dash uses (run **dash setup**
+once, from Settings). During a session the Pillion notification gets a **Screen off** action: tap it
+and the phone's panel is powered down while its display stays *logically* awake, so apps keep
+drawing and the dash keeps updating. Get the phone back with the power button (press once to sleep,
+again to wake), or with **Screen on** from the notification.
+
+- The phone stays unlocked while the panel is dark, and the touchscreen is still live — keep it in a
+  bag or pocket where nothing presses it.
+- The panel is restored automatically when the session ends, when you unlock, and even if Pillion is
+  force-stopped while the screen is dark.
+
 ## Updates
 
 Pillion checks **[GitHub Releases](../../releases)** once on launch and shows an in-app **"Update

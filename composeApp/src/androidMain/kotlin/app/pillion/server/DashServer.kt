@@ -97,6 +97,20 @@ object DashServer {
     @Volatile private var keepAlive: Thread? = null
     @Volatile private var panelOffRetry: Thread? = null
 
+    /**
+     * Screen-off mirroring (BLANK/UNBLANK): blank the phone's own panel at the SurfaceFlinger level
+     * while keeping display 0 *awake* for the framework. Apps on display 0 keep drawing, so the
+     * app's MediaProjection mirror keeps producing frames — the phone is dark (no panel power, no
+     * panel heat) but the dash keeps updating. Independent of [capturing]/the trusted display, so it
+     * works even when the dedicated dash can't be used (e.g. a singleInstance app that refuses to
+     * move, or no UsageStats access).
+     */
+    @Volatile private var mainBlanked = false
+    @Volatile private var mainKeepAlive: Thread? = null
+
+    /** Live loopback clients. If the app dies while blanked, restore the panel instead of leaving it dark. */
+    private val clients = java.util.concurrent.atomic.AtomicInteger(0)
+
     private const val KEEP_ALIVE_MS = 3000L // poke the dash display group well under its ~10s idle timeout
     private val PANEL_OFF_RETRY_DELAYS_MS = longArrayOf(700L, 1500L)
 
@@ -119,29 +133,36 @@ object DashServer {
             val captureThread = HandlerThread("pillion-capture").apply { start() }
             val handler = Handler(captureThread.looper)
 
-            val reader = ImageReader.newInstance(virtualWidth, virtualHeight, PixelFormat.RGBA_8888, 2)
-            reader.setOnImageAvailableListener({ ir -> onImage(ir) }, handler)
-
-            val display = createTrustedVirtualDisplay(
-                context,
-                "pillion-dash",
-                virtualWidth,
-                virtualHeight,
-                dpi,
-                reader.surface,
-            )
-            displayId = display.display.displayId
-            Log.i(
-                TAG,
-                "trusted display created id=$displayId virtual=${virtualWidth}x$virtualHeight " +
-                    "output=${outputWidth}x$outputHeight dpi=$dpi",
-            )
+            // A trusted display is a bonus, not a prerequisite: some builds reject the @hide flags.
+            // If it fails we must still come up, because BLANK/UNBLANK (screen-off mirroring) needs
+            // nothing but panel power control — and that path is the one that always works.
+            runCatching {
+                val reader = ImageReader.newInstance(virtualWidth, virtualHeight, PixelFormat.RGBA_8888, 2)
+                reader.setOnImageAvailableListener({ ir -> onImage(ir) }, handler)
+                val display = createTrustedVirtualDisplay(
+                    context,
+                    "pillion-dash",
+                    virtualWidth,
+                    virtualHeight,
+                    dpi,
+                    reader.surface,
+                )
+                displayId = display.display.displayId
+                Log.i(
+                    TAG,
+                    "trusted display created id=$displayId virtual=${virtualWidth}x$virtualHeight " +
+                        "output=${outputWidth}x$outputHeight dpi=$dpi",
+                )
+            }.onFailure {
+                displayId = -1
+                Log.e(TAG, "trusted display unavailable — screen-off mirroring only: ${reason(it)}")
+            }
 
             // The display starts empty (idle, no encoding). The app sends PROMOTE on screen-off and
             // DEMOTE on unlock over the socket. An optional arg promotes immediately (dev/testing).
-            if (launchComponent != null) promoteApp(launchComponent)
+            if (launchComponent != null && displayId >= 0) promoteApp(launchComponent)
             startTcpServer()
-            Log.i(TAG, "ready, serving frames on 127.0.0.1:$PORT")
+            Log.i(TAG, "ready, serving frames on 127.0.0.1:$PORT (dash display=$displayId)")
         } catch (t: Throwable) {
             Log.e(TAG, "fatal", t)
             return
@@ -195,6 +216,7 @@ object DashServer {
     private fun serveClient(client: Socket) {
         // Reverse channel: the app sends "PROMOTE <component>" on screen-off and "DEMOTE" on unlock.
         Thread { readCommands(client) }.apply { isDaemon = true; start() }
+        clients.incrementAndGet()
         try {
             client.tcpNoDelay = true
             val out = DataOutputStream(BufferedOutputStream(client.getOutputStream()))
@@ -215,6 +237,12 @@ object DashServer {
             Log.i(TAG, "client disconnected: ${e.message}")
         } finally {
             runCatching { client.close() }
+            // Safety: never leave the phone's panel dark with nobody left to turn it back on. If the
+            // app crashed or was force-stopped while blanked, restore display 0 ourselves.
+            if (clients.decrementAndGet() <= 0 && mainBlanked) {
+                Log.w(TAG, "panel: last client gone while blanked — restoring display 0")
+                runCatching { unblankMain() }
+            }
         }
     }
 
@@ -226,6 +254,8 @@ object DashServer {
                 when {
                     line.startsWith("PROMOTE ") -> promoteApp(line.removePrefix("PROMOTE ").trim())
                     line == "DEMOTE" -> demoteApp()
+                    line == "BLANK" -> blankMain()
+                    line == "UNBLANK" -> unblankMain()
                     line == "QUIT" -> shutdown()
                 }
             }
@@ -328,6 +358,80 @@ object DashServer {
     }
 
     /**
+     * **Screen-off mirroring.** Blank the phone's panel while keeping display 0 awake for the
+     * framework, so every app on it keeps drawing and the app's MediaProjection mirror keeps
+     * producing frames. The phone is dark — no backlight power, no panel heat — but the dash keeps
+     * updating, which is what a plain screen-off cannot do (the system stops composing display 0,
+     * the mirror's ImageReader goes silent, and the dash freezes on the last frame).
+     *
+     * Two parts, both required:
+     *  - [setMainDisplayPower]`(false)` — SurfaceFlinger-level panel off (scrcpy's `--turn-screen-off`).
+     *  - [startMainKeepAlive] — userActivity(display 0) heartbeat so PowerManager never dozes the
+     *    display group behind our back; if it did, composition would stop and the mirror would
+     *    freeze even though the panel was already dark.
+     */
+    private fun blankMain() {
+        if (mainBlanked) {
+            Log.d(TAG, "panel: screen-off already armed")
+            return
+        }
+        mainBlanked = true
+        // The phone may already be dozing (power press / screen timeout) — nothing renders in that
+        // state. Wake display 0 first, and drop the keyguard so the mirror shows the app rather than
+        // the lock screen. A secure keyguard shows its prompt instead; nothing we can do from here.
+        wakeDisplay(0)
+        dismissKeyguard()
+        startMainKeepAlive()
+        setMainDisplayPower(false)
+        startPanelOffRetries()
+        Log.i(TAG, "panel: screen-off mirroring armed (display 0 blanked, kept awake)")
+    }
+
+    /** Restore the phone's panel and let it sleep normally again. */
+    private fun unblankMain() {
+        if (!mainBlanked) return
+        mainBlanked = false
+        stopPanelOffRetries()
+        stopMainKeepAlive()
+        setMainDisplayPower(true)
+        Log.i(TAG, "panel: screen-off mirroring disarmed (display 0 restored)")
+    }
+
+    /**
+     * Keep display 0's power group awake while its panel is blanked. Without this, PowerManager
+     * hits the normal screen timeout, dozes the group, and composition — hence the mirror — stops.
+     */
+    private fun startMainKeepAlive() {
+        if (mainKeepAlive != null) return
+        val pm = powerService
+        val m = userActivity
+        if (pm == null || m == null) {
+            Log.w(TAG, "panel: userActivity unavailable — the phone will doze and the mirror will freeze")
+            return
+        }
+        mainKeepAlive = Thread {
+            Log.i(TAG, "panel: keep-awake started for display 0")
+            while (mainBlanked) {
+                runCatching { m.invoke(pm, MAIN_DISPLAY_ID, android.os.SystemClock.uptimeMillis(), 0, 0) }
+                    .onFailure { Log.w(TAG, "panel: userActivity(0) failed: ${reason(it)}") }
+                try { Thread.sleep(KEEP_ALIVE_MS) } catch (_: InterruptedException) { break }
+            }
+            Log.i(TAG, "panel: keep-awake stopped")
+        }.apply { isDaemon = true; start() }
+    }
+
+    private fun stopMainKeepAlive() {
+        mainKeepAlive?.interrupt()
+        mainKeepAlive = null
+    }
+
+    /** No-op when the phone is already unlocked; drops an insecure keyguard after a wake. */
+    private fun dismissKeyguard() {
+        runCatching { exec("wm", "dismiss-keyguard") }
+            .onFailure { Log.d(TAG, "panel: dismiss-keyguard unavailable: ${reason(it)}") }
+    }
+
+    /**
      * On Android 16, wakeUpWithDisplayId() may still be finishing its normal display-on transition
      * when the first panel-off request runs, so PowerManager can turn display 0 back on a few hundred
      * milliseconds later. Retry after the wake settles; the virtual display keeps rendering.
@@ -344,7 +448,7 @@ object DashServer {
                     break
                 }
                 elapsed = delay
-                if (!capturing) break
+                if (!capturing && !mainBlanked) break
                 Log.i(TAG, "panel: retrying main display OFF after ${delay}ms")
                 setMainDisplayPower(false)
             }
@@ -407,6 +511,7 @@ object DashServer {
         }
     }
 
+    private const val MAIN_DISPLAY_ID = 0
     private const val POWER_MODE_OFF = 0
     private const val POWER_MODE_NORMAL = 2
     private const val DISPLAY_STATE_OFF = 1
@@ -569,6 +674,7 @@ object DashServer {
      *  would otherwise outlive the app). */
     private fun shutdown() {
         Log.i(TAG, "shutdown requested; releasing display and exiting")
+        runCatching { unblankMain() } // never exit leaving the phone's panel dark
         runCatching { demoteApp() }
         System.exit(0)
     }
@@ -578,8 +684,12 @@ object DashServer {
         capturing = false
         stopPanelOffRetries()
         stopHeartbeat()
-        wakeDisplay(0) // requestDisplayPower(ON) cannot restore a still-dozing power group by itself
-        setMainDisplayPower(true) // restore the phone's panel
+        if (!mainBlanked) {
+            // Screen-off mirroring may still be armed (the dash fell back to the mirror); in that
+            // case the panel must stay dark, so only restore it when nothing else wants it off.
+            wakeDisplay(0) // requestDisplayPower(ON) cannot restore a still-dozing power group by itself
+            setMainDisplayPower(true) // restore the phone's panel
+        }
         latestJpeg = null
         lastComponent?.let { relocateApp(it, 0) } // move the task back to the phone's own display
         Log.i(TAG, "demoted to phone")

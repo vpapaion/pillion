@@ -6,6 +6,28 @@ All notable changes to Pillion are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Screen-off mirroring (Android).** A **Screen off** action on the Pillion notification blanks the
+  phone's panel at the SurfaceFlinger level while keeping display 0 awake, so MediaProjection keeps
+  producing frames: the phone is dark — no backlight power, no panel heat — and the dash keeps
+  updating. Previously a screen-off stopped display 0 being composed, the capture went silent, and
+  the engine re-sent the last captured frame forever (dash connected but frozen). Needs the shell
+  helper, i.e. the same dash setup as the dedicated dash. Restored automatically on unlock, on
+  session end, and if the app dies while the panel is dark.
+
+### Fixed
+- **Dedicated dash no longer freezes silently.** `am display move-stack` reports success even when a
+  singleTask/singleInstance app (Maps mid-navigation) refuses to move, and the trusted display can
+  fail to be created at all; both left the dash sitting on a stale frame. The session now checks
+  whether the dash actually produced frames after a promote and falls back to screen-off mirroring
+  if it did not — the same fallback covers a missing foreground app (no usage access).
+- **The mirror no longer covers for a dead dash indefinitely.** `SwitchableScreenSource` fell back to
+  `mirror.latestFrame()` while promoted, which is the frozen pre-lock bitmap, defeating the dash
+  source's staleness guard and reporting a healthy 15 fps over a frozen dash. The fallback is now
+  limited to the hand-over window.
+- **The helper survives a failed trusted display** instead of exiting, so panel control (and hence
+  screen-off mirroring) still works on builds that reject the `@hide` display flags.
+
 ## [0.2.0-alpha] - 2026-06-28
 
 Second alpha. iOS joins Android, and a SOLID head-unit architecture lands so the app can drive more than

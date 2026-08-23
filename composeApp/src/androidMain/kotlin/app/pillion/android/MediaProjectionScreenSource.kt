@@ -10,6 +10,7 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
 import app.pillion.core.ScreenSource
 import java.io.ByteArrayOutputStream
@@ -29,6 +30,7 @@ class MediaProjectionScreenSource(
     private var reader: ImageReader? = null
     private var display: VirtualDisplay? = null
     @Volatile private var latest: Bitmap? = null
+    @Volatile private var lastFrameAt = 0L
 
     override fun start() {
         if (display != null) return // idempotent: capture may be pre-started by the service
@@ -52,6 +54,7 @@ class MediaProjectionScreenSource(
         try {
             val first = latest == null
             latest = toBitmap(image)
+            lastFrameAt = SystemClock.elapsedRealtime()
             if (first) Log.d(TAG, "screen: first frame captured")
         } catch (t: Throwable) {
             Log.w(TAG, "screen: dropped a frame", t)
@@ -71,6 +74,16 @@ class MediaProjectionScreenSource(
         full.copyPixelsFromBuffer(plane.buffer)
         return if (rowPadding == 0) full else Bitmap.createBitmap(full, 0, 0, WIDTH, HEIGHT)
     }
+
+    /**
+     * How long since the mirror last produced a *new* frame. Deliberately **not** used to gate
+     * [latestFrame]: a static screen (a map that isn't moving) legitimately produces no frames, so
+     * age alone doesn't mean the mirror is dead. It is the signal used to tell whether the phone's
+     * display is still being composed at all — when the panel powers down, this grows without
+     * bound while [latestFrame] happily keeps handing out the same frozen bitmap.
+     */
+    fun msSinceLastFrame(): Long =
+        if (lastFrameAt == 0L) Long.MAX_VALUE else SystemClock.elapsedRealtime() - lastFrameAt
 
     override fun latestFrame(): ByteArray? {
         val bitmap = latest ?: return null

@@ -26,6 +26,7 @@ class DashStreamScreenSource : ScreenSource {
     @Volatile private var lastFrameAt: Long = 0
     @Volatile private var staleLogged = false
     @Volatile private var desiredComponent: String? = null
+    @Volatile private var desiredBlank = false
 
     override fun start() {
         if (running) return
@@ -82,6 +83,30 @@ class DashStreamScreenSource : ScreenSource {
         return frame
     }
 
+    /**
+     * True when the helper is currently delivering frames. The engine-facing [latestFrame] hides
+     * this behind its staleness guard, so callers that need to *decide* something (e.g. fall back
+     * to screen-off mirroring because the dash never came up) ask here.
+     */
+    fun isFresh(): Boolean =
+        latest != null && SystemClock.elapsedRealtime() - lastFrameAt <= STALE_MS
+
+    /**
+     * Screen-off mirroring: blank the phone's panel while keeping display 0 awake, so the
+     * MediaProjection mirror keeps producing frames with the phone dark. Survives reconnects — the
+     * desired state is replayed by [syncDesiredState].
+     */
+    fun blank() {
+        desiredBlank = true
+        send("BLANK\n")
+    }
+
+    /** Restore the phone's panel. */
+    fun unblank() {
+        desiredBlank = false
+        send("UNBLANK\n")
+    }
+
     /** Tell the helper to move the foreground app onto the dash display and start encoding. */
     fun promote(component: String) {
         desiredComponent = component
@@ -121,6 +146,11 @@ class DashStreamScreenSource : ScreenSource {
             Log.d(TAG, "dash stream: syncing pending PROMOTE $component")
             send(s, "PROMOTE $component\n")
         }
+        // The helper restores the panel when its last client drops, so a reconnect must re-arm.
+        if (desiredBlank) {
+            Log.d(TAG, "dash stream: syncing pending BLANK")
+            send(s, "BLANK\n")
+        }
     }
 
     private fun send(s: Socket, line: String) {
@@ -142,6 +172,7 @@ class DashStreamScreenSource : ScreenSource {
         running = false
         runCatching { socket?.close() }
         desiredComponent = null
+        desiredBlank = false
         latest = null
     }
 

@@ -76,6 +76,9 @@ From the decrypted `com.garmin.motorizeapp` iPA:
 
 ## Known limits (carry the expectations from real-bike testing)
 - **USB bikes only** (no-USB bikes like MT-07 can't do Path B).
-- **Screen-off freezes the mirror** (MediaProjection/ReplayKit need the screen on); the real fix is a
-  `DashContentSource` rendering off-screen (architecture doc) — Phase 4, not now.
+- **Screen-off freezes the mirror** (MediaProjection/ReplayKit need the display to still be composed).
+  On the NaviLite path the shell helper works around it by blanking the panel while keeping display 0
+  awake (see "Riding with the phone screen off" in the README); the SDL path does **not** use that
+  helper yet, so it still freezes. The real fix for both is a `DashContentSource` rendering off-screen
+  (architecture doc) — Phase 4, not now.
 - **Mirror looks softer** than a native render (portrait phone → 640×360 landscape). Same fix as above.
