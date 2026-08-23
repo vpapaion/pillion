@@ -312,6 +312,8 @@ internal fun SettingsScreen(
 
         Spacer(Modifier.height(28.dp))
         MadeByCredit { uriHandler.openUri("https://github.com/alexandrevega") }
+        Spacer(Modifier.height(4.dp))
+        ForkCredit { uriHandler.openUri("https://github.com/vpapaion") }
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -659,6 +661,27 @@ private fun MadeByCredit(onClick: () -> Unit) {
         Text(" by ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(
             "@alexandrevega",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+
+@Composable
+private fun ForkCredit(onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Tracer 7 / Pillion Zoom fork by ",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "@vpapaion",
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.primary,

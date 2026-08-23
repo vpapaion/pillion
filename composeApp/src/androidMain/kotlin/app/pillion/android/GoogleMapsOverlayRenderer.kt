@@ -79,6 +79,47 @@ internal class GoogleMapsOverlayRenderer(private val context: Context) {
         return true
     }
 
+    /**
+     * Dedicated screen-off layout for the 480x240 Tracer display: a large maneuver arrow, a very
+     * large remaining-distance number, and 1-2 short instruction lines — sized to dominate the
+     * screen rather than the compact corner panel [draw] uses over the live mirror.
+     */
+    fun drawFullScreen(canvas: Canvas, width: Int, height: Int): Boolean {
+        val direction = GoogleMapsNavigationState.snapshot(context) ?: return false
+        if (width <= 0 || height <= 0) return false
+
+        val arrowRight = width * 0.42f
+        arrowPaint.strokeWidth = height * 0.06f
+        drawManeuver(
+            canvas = canvas,
+            maneuver = direction.maneuver,
+            // Top kept clear of the status label drawn separately by the caller at (12, 14).
+            area = RectF(width * 0.04f, height * 0.16f, arrowRight, height * 0.96f),
+        )
+
+        val textLeft = arrowRight + width * 0.03f
+        val textWidth = width - textLeft - width * 0.02f
+
+        distancePaint.textAlign = Paint.Align.LEFT
+        var distanceSize = height * 0.32f
+        distancePaint.textSize = distanceSize
+        val distance = direction.distance ?: "—"
+        while (distancePaint.measureText(distance) > textWidth && distanceSize > height * 0.14f) {
+            distanceSize -= 2f
+            distancePaint.textSize = distanceSize
+        }
+        canvas.drawText(distance, textLeft, height * 0.56f, distancePaint)
+
+        instructionPaint.textSize = height * 0.09f
+        val lineHeight = height * 0.11f
+        var baseline = height * 0.78f
+        wrap(direction.instruction, textWidth, instructionPaint, maxLines = 2).forEach { line ->
+            canvas.drawText(line, textLeft, baseline, instructionPaint)
+            baseline += lineHeight
+        }
+        return true
+    }
+
     private fun drawManeuver(canvas: Canvas, maneuver: NavigationManeuver, area: RectF) {
         val cx = area.centerX()
         val top = area.top + area.height() * 0.08f

@@ -14,9 +14,11 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
 import app.pillion.core.DashboardCropControl
 import app.pillion.core.MirrorFocus
+import app.pillion.core.MirrorFreshness
 import app.pillion.core.MirrorZoom
 import app.pillion.core.ScreenSource
 import java.io.ByteArrayOutputStream
@@ -27,6 +29,10 @@ import java.io.ByteArrayOutputStream
  *
  * Crop position is read from [MirrorViewportState] for every frame, so dashboard buttons can move
  * the visible area immediately while mirroring continues.
+ *
+ * Implements [MirrorFreshness] so callers (namely [ScreenOffGoogleMapsScreenSource]) can tell a
+ * newly captured frame from the same cached [latest] bitmap being handed out forever — Android can
+ * stop this projection while the screen is off, and [latestFrame] alone can't reveal that.
  */
 class MediaProjectionScreenSource(
     private val context: Context,
@@ -34,13 +40,16 @@ class MediaProjectionScreenSource(
     private val quality: Int = DEFAULT_QUALITY,
     zoomPercent: Int = MirrorZoom.DEFAULT_PERCENT,
     focus: MirrorFocus = MirrorFocus.DEFAULT,
-) : ScreenSource, DashboardCropControl {
+) : ScreenSource, DashboardCropControl, MirrorFreshness {
 
     private val thread = HandlerThread("pillion-capture").apply { start() }
     private val handler = Handler(thread.looper)
     private var reader: ImageReader? = null
     private var display: VirtualDisplay? = null
     @Volatile private var latest: Bitmap? = null
+    @Volatile private var lastFrameAt = 0L
+    @Volatile private var frameGen = 0L
+    @Volatile private var captureStopped = false
 
     private val output = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)
     private val canvas = Canvas(output)
@@ -62,7 +71,10 @@ class MediaProjectionScreenSource(
     override fun start() {
         if (display != null) return // idempotent: capture may be pre-started by the service
         projection.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() { Log.w(TAG, "screen: projection stopped by the system") }
+            override fun onStop() {
+                captureStopped = true
+                Log.w(TAG, "screen: projection stopped by the system")
+            }
         }, handler)
         val r = ImageReader.newInstance(WIDTH, HEIGHT, PixelFormat.RGBA_8888, 2)
         r.setOnImageAvailableListener({ ir -> capture(ir) }, handler)
@@ -85,6 +97,8 @@ class MediaProjectionScreenSource(
         try {
             val first = latest == null
             latest = toBitmap(image)
+            lastFrameAt = SystemClock.elapsedRealtime()
+            frameGen++
             if (first) Log.d(TAG, "screen: first frame captured")
         } catch (t: Throwable) {
             Log.w(TAG, "screen: dropped a frame", t)
@@ -127,6 +141,14 @@ class MediaProjectionScreenSource(
     override fun cycleCropPreset(delta: Int) {
         MirrorViewportState.cyclePreset(context, delta)
     }
+
+    override fun frameGeneration(): Long = frameGen
+
+    override fun isCaptureStopped(): Boolean = captureStopped
+
+    /** Diagnostic: how long since a genuinely new frame was captured (not just requested). */
+    fun msSinceLastFrame(): Long =
+        if (lastFrameAt == 0L) Long.MAX_VALUE else SystemClock.elapsedRealtime() - lastFrameAt
 
     private fun drawOverlay(viewport: MirrorViewportSnapshot, mapsOverlayVisible: Boolean) {
         if (!viewport.overlayVisible()) return
