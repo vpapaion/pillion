@@ -82,7 +82,28 @@ class ScreenOffGoogleMapsScreenSource(
         }
     }
 
-    override fun latestFrame(): ByteArray? {
+    override fun latestFrame(): ByteArray? = try {
+        computeFrame()
+    } catch (t: Throwable) {
+        // MirrorEngine's streamLoop is a single uncaught-exception-away from Error state, which
+        // stops the whole CaptureService — killing the Bluetooth session and forcing the rider to
+        // manually reconnect. Never let a render failure here take the session down: log it and
+        // keep the stream alive on a minimal fallback frame instead.
+        Log.e(TAG, "screen-off directions: latestFrame failed — keeping session alive", t)
+        runCatching { fallbackFrame() }.getOrNull()
+    }
+
+    private fun fallbackFrame(): ByteArray {
+        canvas.drawColor(Color.rgb(7, 10, 14))
+        canvas.drawText("PILLION", 12f, 20f, labelPaint)
+        canvas.drawText("Recovering — hold on", 12f, 44f, titlePaint)
+        return ByteArrayOutputStream().use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 60, out)
+            out.toByteArray()
+        }
+    }
+
+    private fun computeFrame(): ByteArray? {
         val interactive = powerManager?.isInteractive != false
         if (!interactive) {
             wasInteractive = false

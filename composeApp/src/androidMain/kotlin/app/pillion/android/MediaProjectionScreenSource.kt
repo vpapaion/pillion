@@ -119,7 +119,7 @@ class MediaProjectionScreenSource(
         return if (rowPadding == 0) full else Bitmap.createBitmap(full, 0, 0, WIDTH, HEIGHT)
     }
 
-    override fun latestFrame(): ByteArray? {
+    override fun latestFrame(): ByteArray? = try {
         val bitmap = latest ?: return null
         val viewport = MirrorViewportState.snapshot()
         val cropWidth = MirrorZoom.cropSize(WIDTH, viewport.zoomPercent)
@@ -132,10 +132,16 @@ class MediaProjectionScreenSource(
         val mapsOverlayVisible = googleMapsOverlay.draw(canvas, WIDTH, HEIGHT)
         drawOverlay(viewport, mapsOverlayVisible)
 
-        return ByteArrayOutputStream().use { out ->
+        ByteArrayOutputStream().use { out ->
             output.compress(Bitmap.CompressFormat.JPEG, quality, out)
             out.toByteArray()
         }
+    } catch (t: Throwable) {
+        // An uncaught exception here bubbles all the way up through MirrorEngine's streamLoop and
+        // stops the whole CaptureService (Bluetooth session dies, rider must manually reconnect).
+        // A dropped frame is much cheaper than a dead session — skip it and let the next poll retry.
+        Log.e(TAG, "screen: latestFrame failed — dropping this frame", t)
+        null
     }
 
     override fun cycleCropPreset(delta: Int) {

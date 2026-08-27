@@ -43,12 +43,12 @@ jobs:
           ./gradlew --stacktrace :composeApp:testDebugUnitTest :composeApp:assembleDebug
 
       - name: Name APK
-        run: cp composeApp/build/outputs/apk/debug/composeApp-debug.apk Pillion-Zoom-Tracer7-Screen-Resume.apk
+        run: cp composeApp/build/outputs/apk/debug/composeApp-debug.apk Pillion-Zoom-Tracer7-Crash-Guard.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Pillion-Zoom-Tracer7-Screen-Resume
-          path: Pillion-Zoom-Tracer7-Screen-Resume.apk
+          name: Pillion-Zoom-Tracer7-Crash-Guard
+          path: Pillion-Zoom-Tracer7-Crash-Guard.apk
           if-no-files-found: error
           retention-days: 30

@@ -93,8 +93,8 @@ android {
         applicationId = "app.pillion.tracer7zoom"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 9
-        versionName = "0.2.8-tracer7-screen-resume"
+        versionCode = 10
+        versionName = "0.2.9-tracer7-crash-guard"
     }
     // Exposes VERSION_NAME so AppInfo.VERSION reads the build's own version (not a hardcoded copy).
     buildFeatures {
