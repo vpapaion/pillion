@@ -39,6 +39,7 @@ fun App(
     dashSetup: DashSetup? = null,
     googleMapsOverlaySupported: Boolean = false,
     onOpenNotificationAccess: () -> Unit = {},
+    onExportDiagnosticLog: () -> Unit = {},
 ) {
     var themeMode by remember { mutableStateOf(settingsStore?.themeMode() ?: ThemeMode.SYSTEM) }
     PillionTheme(themeMode) {
@@ -144,6 +145,7 @@ fun App(
                     }
                 },
                 onOpenNotificationAccess = onOpenNotificationAccess,
+                onExportDiagnosticLog = onExportDiagnosticLog,
                 onSetUpDash = { showDashOnboarding = true },
                 onDisableDash = { dashEnabled = false; settingsStore?.setDashEnabled(false) },
                 bikeName = profile.displayName,

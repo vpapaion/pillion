@@ -86,6 +86,7 @@ internal fun SettingsScreen(
     screenOffDirectionsEnabled: Boolean = false,
     onScreenOffDirectionsEnabled: (Boolean) -> Unit = {},
     onOpenNotificationAccess: () -> Unit = {},
+    onExportDiagnosticLog: () -> Unit = {},
     onSetUpDash: () -> Unit = {},
     onDisableDash: () -> Unit = {},
     bikeName: String = "",
@@ -255,6 +256,28 @@ internal fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 6.dp, top = 8.dp, end = 6.dp),
             )
+
+            Spacer(Modifier.height(24.dp))
+            SectionHeader("Diagnostics")
+            SettingsGroup {
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Export diagnostic log", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Share a log of this app's activity — useful for a bug report from the bike, " +
+                                "no computer needed.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    OutlinedButton(onClick = onExportDiagnosticLog, shape = RoundedCornerShape(12.dp)) {
+                        Text("Share")
+                    }
+                }
+            }
         }
 
         if (dashSupported) {

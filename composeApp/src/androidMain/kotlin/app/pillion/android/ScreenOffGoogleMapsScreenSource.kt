@@ -8,7 +8,6 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.PowerManager
 import android.os.SystemClock
-import android.util.Log
 import app.pillion.core.DashboardCropControl
 import app.pillion.core.MirrorFreshness
 import app.pillion.core.ScreenSource
@@ -89,7 +88,7 @@ class ScreenOffGoogleMapsScreenSource(
         // stops the whole CaptureService — killing the Bluetooth session and forcing the rider to
         // manually reconnect. Never let a render failure here take the session down: log it and
         // keep the stream alive on a minimal fallback frame instead.
-        Log.e(TAG, "screen-off directions: latestFrame failed — keeping session alive", t)
+        DiagnosticLog.e(TAG, "screen-off directions: latestFrame failed — keeping session alive", t)
         runCatching { fallbackFrame() }.getOrNull()
     }
 
@@ -118,7 +117,7 @@ class ScreenOffGoogleMapsScreenSource(
             captureConfirmedDead = false
             resumeBaselineGeneration = freshness?.frameGeneration() ?: -1L
             resumeDeadlineAt = SystemClock.elapsedRealtime() + RESUME_GRACE_MS
-            Log.d(TAG, "screen-off directions: screen on — verifying live capture before resuming mirror")
+            DiagnosticLog.d(TAG, "screen-off directions: screen on — verifying live capture before resuming mirror")
         }
         if (!verifyingResume) return mirror.latestFrame()
 
@@ -131,12 +130,12 @@ class ScreenOffGoogleMapsScreenSource(
         if (fresh.isCaptureStopped()) {
             if (!captureConfirmedDead) {
                 captureConfirmedDead = true
-                Log.w(TAG, "screen-off directions: MediaProjection was stopped by the system")
+                DiagnosticLog.w(TAG, "screen-off directions: MediaProjection was stopped by the system")
             }
             return screenOffFrame(paused = true)
         }
         if (fresh.frameGeneration() != resumeBaselineGeneration) {
-            Log.d(TAG, "screen-off directions: fresh mirror frame confirmed — resuming live mirror")
+            DiagnosticLog.d(TAG, "screen-off directions: fresh mirror frame confirmed — resuming live mirror")
             verifyingResume = false
             return mirror.latestFrame()
         }

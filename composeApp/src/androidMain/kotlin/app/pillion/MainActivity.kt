@@ -10,9 +10,11 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import app.pillion.android.AndroidMirrorController
 import app.pillion.android.AndroidSettingsStore
 import app.pillion.android.CaptureService
+import app.pillion.android.DiagnosticLog
 import app.pillion.android.GitHubUpdateChecker
 import app.pillion.android.SdlMirrorController
 import app.pillion.android.sdl.ProjectionHolder
@@ -76,6 +78,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DiagnosticLog.attach(applicationContext)
         registerBuiltInHeadUnits()
         val updateChecker = GitHubUpdateChecker(AppInfo.REPO)
         setContent {
@@ -86,6 +89,7 @@ class MainActivity : ComponentActivity() {
                 dashSetup = null,
                 googleMapsOverlaySupported = true,
                 onOpenNotificationAccess = ::openNotificationAccessSettings,
+                onExportDiagnosticLog = ::exportDiagnosticLog,
             )
         }
     }
@@ -148,5 +152,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-
+    /**
+     * Shares the on-device diagnostic log via the normal Android share sheet, for real-bike bug
+     * reports where a computer/adb isn't practical (see [DiagnosticLog]).
+     */
+    private fun exportDiagnosticLog() {
+        runCatching {
+            val file = DiagnosticLog.logFile(this)
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "Pillion diagnostic log (${AppInfo.VERSION})")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, "Share Pillion diagnostic log"))
+        }
+    }
 }

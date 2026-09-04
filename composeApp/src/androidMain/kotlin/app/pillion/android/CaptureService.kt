@@ -17,7 +17,6 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
-import android.util.Log
 import app.pillion.core.DashResolution
 import app.pillion.core.MirrorEngine
 import app.pillion.core.MirrorFocus
@@ -54,6 +53,7 @@ class CaptureService : Service() {
     @Volatile private var dashSawLockedKeyguard = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        DiagnosticLog.attach(this)
         if (intent?.action == ACTION_STOP) {
             stopSelf()
             return START_NOT_STICKY
@@ -110,7 +110,7 @@ class CaptureService : Service() {
         try {
             startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         } catch (e: SecurityException) {
-            Log.e(TAG, "media projection FGS rejected — stale capture grant", e)
+            DiagnosticLog.e(TAG, "media projection FGS rejected — stale capture grant", e)
             resultCode = 0; resultData = null
             runCatching { startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE) }
             fail("Screen capture expired — tap Start again"); return
@@ -126,7 +126,7 @@ class CaptureService : Service() {
         runCatching { mirror.start() }
 
         val source: ScreenSource = if (screenOffDirectionsEnabled) {
-            Log.d(TAG, "screen-off directions: Bluetooth-only mode enabled")
+            DiagnosticLog.d(TAG, "screen-off directions: Bluetooth-only mode enabled")
             ScreenOffGoogleMapsScreenSource(
                 context = this,
                 mirror = mirror,
@@ -152,7 +152,7 @@ class CaptureService : Service() {
                     )
                 }
                     .onFailure {
-                        Log.e(TAG, "dash: helper unavailable", it)
+                        DiagnosticLog.e(TAG, "dash: helper unavailable", it)
                         fail(it.message ?: "Dash helper unavailable")
                     }
             }
@@ -179,13 +179,13 @@ class CaptureService : Service() {
                     when (action) {
                         Intent.ACTION_SCREEN_OFF -> {
                             if (dashPromotedAtMs != 0L) {
-                                Log.d(TAG, "dash: screen off while already promoted; keeping dash active")
+                                DiagnosticLog.d(TAG, "dash: screen off while already promoted; keeping dash active")
                                 return@launch
                             }
                             val component = foregroundComponent()
-                            Log.d(TAG, "dash: screen off; foreground=$component")
+                            DiagnosticLog.d(TAG, "dash: screen off; foreground=$component")
                             if (component == null) {
-                                Log.w(TAG, "dash: no foreground app; usage access may be missing")
+                                DiagnosticLog.w(TAG, "dash: no foreground app; usage access may be missing")
                             } else {
                                 dashSwitch?.promote(component)
                                 dashPromotedAtMs = System.currentTimeMillis()
@@ -202,7 +202,7 @@ class CaptureService : Service() {
                                 } else {
                                     // The helper briefly wakes the device during PROMOTE so the virtual display
                                     // can render. Ignore that synthetic wake; panel-off retries will blank display 0.
-                                    Log.d(TAG, "dash: ignoring promotion wake (${ageMs}ms)")
+                                    DiagnosticLog.d(TAG, "dash: ignoring promotion wake (${ageMs}ms)")
                                     schedulePromotionWakeSettleCheck(promotedAt, ageMs)
                                 }
                             }
@@ -236,7 +236,7 @@ class CaptureService : Service() {
     private fun registerKeyguardUnlockListener() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         if (checkSelfPermission(PERMISSION_SUBSCRIBE_KEYGUARD) != PackageManager.PERMISSION_GRANTED) {
-            Log.d(TAG, "dash: keyguard unlock listener unavailable; permission not granted")
+            DiagnosticLog.d(TAG, "dash: keyguard unlock listener unavailable; permission not granted")
             return
         }
         runCatching {
@@ -252,7 +252,7 @@ class CaptureService : Service() {
                     scope.launch(Dispatchers.IO) {
                         if (locked) {
                             if (dashPromotedAtMs != 0L) dashSawLockedKeyguard = true
-                            Log.d(TAG, "dash: keyguard locked")
+                            DiagnosticLog.d(TAG, "dash: keyguard locked")
                         } else {
                             onKeyguardUnlocked()
                         }
@@ -266,9 +266,9 @@ class CaptureService : Service() {
                 .invoke(manager, executor, listener)
             keyguardManager = manager
             keyguardListener = listener
-            Log.d(TAG, "dash: keyguard unlock listener registered")
+            DiagnosticLog.d(TAG, "dash: keyguard unlock listener registered")
         }.onFailure {
-            Log.d(TAG, "dash: keyguard unlock listener unavailable: ${it.javaClass.simpleName}")
+            DiagnosticLog.d(TAG, "dash: keyguard unlock listener unavailable: ${it.javaClass.simpleName}")
             keyguardManager = null
             keyguardListener = null
         }
@@ -294,7 +294,7 @@ class CaptureService : Service() {
         if (dashSawLockedKeyguard || ageMs >= RETURN_TO_PHONE_GRACE_MS) {
             returnToPhone("keyguard unlocked")
         } else {
-            Log.d(TAG, "dash: ignoring keyguard-unlocked callback before lock settled (${ageMs}ms)")
+            DiagnosticLog.d(TAG, "dash: ignoring keyguard-unlocked callback before lock settled (${ageMs}ms)")
         }
     }
 
@@ -303,7 +303,7 @@ class CaptureService : Service() {
             Thread.sleep(LOCK_STATE_SAMPLE_DELAY_MS)
             if (dashPromotedAtMs == promotedAt && isKeyguardLockedNow()) {
                 dashSawLockedKeyguard = true
-                Log.d(TAG, "dash: keyguard locked after promotion")
+                DiagnosticLog.d(TAG, "dash: keyguard locked after promotion")
             }
         }
     }
@@ -316,14 +316,14 @@ class CaptureService : Service() {
             if (dashSawLockedKeyguard && isKeyguardUnlockedNow()) {
                 returnToPhone("unlock after promotion wake")
             } else {
-                Log.d(TAG, "dash: promotion wake settled; keeping dash active")
+                DiagnosticLog.d(TAG, "dash: promotion wake settled; keeping dash active")
             }
         }
     }
 
     private fun returnToPhone(reason: String, force: Boolean = false) {
         if (!force && dashPromotedAtMs == 0L) return
-        Log.d(TAG, "dash: $reason; returning to phone")
+        DiagnosticLog.d(TAG, "dash: $reason; returning to phone")
         dashPromotedAtMs = 0L
         dashSawLockedKeyguard = false
         dashSwitch?.demote()
@@ -344,7 +344,7 @@ class CaptureService : Service() {
         val usm = getSystemService(UsageStatsManager::class.java) ?: return null
         val now = System.currentTimeMillis()
         val events = runCatching { usm.queryEvents(now - 60_000, now) }
-            .onFailure { Log.w(TAG, "dash: usage query failed", it) }
+            .onFailure { DiagnosticLog.w(TAG, "dash: usage query failed", it) }
             .getOrNull() ?: return null
         val event = UsageEvents.Event()
         var component: String? = null
@@ -356,14 +356,14 @@ class CaptureService : Service() {
                     ?.component
                     ?.flattenToString()
                 if (candidate == null) {
-                    Log.d(TAG, "dash: ignoring foreground package without launcher: ${event.packageName}")
+                    DiagnosticLog.d(TAG, "dash: ignoring foreground package without launcher: ${event.packageName}")
                 } else {
                     component = candidate
-                    Log.d(TAG, "dash: foreground candidate=$component")
+                    DiagnosticLog.d(TAG, "dash: foreground candidate=$component")
                 }
             }
         }
-        if (component == null) Log.w(TAG, "dash: UsageStats returned no launchable foreground app")
+        if (component == null) DiagnosticLog.w(TAG, "dash: UsageStats returned no launchable foreground app")
         return component
     }
 

@@ -15,7 +15,6 @@ import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
-import android.util.Log
 import app.pillion.core.DashboardCropControl
 import app.pillion.core.MirrorFocus
 import app.pillion.core.MirrorFreshness
@@ -73,7 +72,7 @@ class MediaProjectionScreenSource(
         projection.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 captureStopped = true
-                Log.w(TAG, "screen: projection stopped by the system")
+                DiagnosticLog.w(TAG, "screen: projection stopped by the system")
             }
         }, handler)
         val r = ImageReader.newInstance(WIDTH, HEIGHT, PixelFormat.RGBA_8888, 2)
@@ -85,7 +84,7 @@ class MediaProjectionScreenSource(
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, r.surface, null, handler,
         )
         val viewport = MirrorViewportState.snapshot()
-        Log.d(
+        DiagnosticLog.d(
             TAG,
             "screen: virtual display created (${WIDTH}x$HEIGHT), zoom=${viewport.zoomPercent}% " +
                 "crop=${viewport.xPercent},${viewport.yPercent}",
@@ -99,9 +98,9 @@ class MediaProjectionScreenSource(
             latest = toBitmap(image)
             lastFrameAt = SystemClock.elapsedRealtime()
             frameGen++
-            if (first) Log.d(TAG, "screen: first frame captured")
+            if (first) DiagnosticLog.d(TAG, "screen: first frame captured")
         } catch (t: Throwable) {
-            Log.w(TAG, "screen: dropped a frame", t)
+            DiagnosticLog.w(TAG, "screen: dropped a frame", t)
         } finally {
             image.close()
         }
@@ -140,7 +139,7 @@ class MediaProjectionScreenSource(
         // An uncaught exception here bubbles all the way up through MirrorEngine's streamLoop and
         // stops the whole CaptureService (Bluetooth session dies, rider must manually reconnect).
         // A dropped frame is much cheaper than a dead session — skip it and let the next poll retry.
-        Log.e(TAG, "screen: latestFrame failed — dropping this frame", t)
+        DiagnosticLog.e(TAG, "screen: latestFrame failed — dropping this frame", t)
         null
     }
 
