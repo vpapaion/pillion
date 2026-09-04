@@ -6,14 +6,15 @@ import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import app.pillion.android.AndroidDashSetup
+import androidx.core.content.FileProvider
 import app.pillion.android.AndroidMirrorController
 import app.pillion.android.AndroidSettingsStore
-import app.pillion.android.AdbPairingCoordinator
 import app.pillion.android.CaptureService
+import app.pillion.android.DiagnosticLog
 import app.pillion.android.GitHubUpdateChecker
 import app.pillion.android.SdlMirrorController
 import app.pillion.android.sdl.ProjectionHolder
@@ -54,9 +55,15 @@ class MainActivity : ComponentActivity() {
                 val intent = Intent(this, CaptureService::class.java)
                     .putExtra(CaptureService.EXTRA_QUALITY, pendingSettings.quality)
                     .putExtra(CaptureService.EXTRA_MAX_FPS, pendingSettings.maxFps)
-                    .putExtra(CaptureService.EXTRA_DASH_ENABLED, settingsStore.dashEnabled())
+                    .putExtra(CaptureService.EXTRA_DASH_ENABLED, false)
+                    .putExtra(
+                        CaptureService.EXTRA_SCREEN_OFF_DIRECTIONS_ENABLED,
+                        settingsStore.screenOffDirectionsEnabled(),
+                    )
                     .putExtra(CaptureService.EXTRA_DASH_WIDTH, pendingSettings.dashResolution.width)
                     .putExtra(CaptureService.EXTRA_DASH_HEIGHT, pendingSettings.dashResolution.height)
+                    .putExtra(CaptureService.EXTRA_MIRROR_ZOOM, pendingSettings.zoomPercent)
+                    .putExtra(CaptureService.EXTRA_MIRROR_FOCUS, pendingSettings.focus.name)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
                 else startService(intent)
             }
@@ -69,21 +76,22 @@ class MainActivity : ComponentActivity() {
         if (granted.values.all { it }) requestProjection()
     }
 
-    private val notificationPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted) AdbPairingCoordinator.start(applicationContext)
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DiagnosticLog.attach(applicationContext)
         registerBuiltInHeadUnits()
         val updateChecker = GitHubUpdateChecker(AppInfo.REPO)
-        val dashSetup = AndroidDashSetup(
-            context = applicationContext,
-            requestNotificationPermission = ::requestNotificationPermission,
-        )
-        setContent { App(::controllerFor, updateChecker, settingsStore, dashSetup) }
+        setContent {
+            App(
+                controllerFor = ::controllerFor,
+                updateChecker = updateChecker,
+                settingsStore = settingsStore,
+                dashSetup = null,
+                googleMapsOverlaySupported = true,
+                onOpenNotificationAccess = ::openNotificationAccessSettings,
+                onExportDiagnosticLog = ::exportDiagnosticLog,
+            )
+        }
     }
 
     /** Resolve the [MirrorController] for the selected head unit (DIP — the UI doesn't know which). */
@@ -136,11 +144,29 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    private fun requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    private fun openNotificationAccessSettings() {
+        runCatching {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        }.onFailure {
+            startActivity(Intent(Settings.ACTION_SETTINGS))
+        }
+    }
+
+    /**
+     * Shares the on-device diagnostic log via the normal Android share sheet, for real-bike bug
+     * reports where a computer/adb isn't practical (see [DiagnosticLog]).
+     */
+    private fun exportDiagnosticLog() {
+        runCatching {
+            val file = DiagnosticLog.logFile(this)
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "Pillion diagnostic log (${AppInfo.VERSION})")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, "Share Pillion diagnostic log"))
         }
     }
 }

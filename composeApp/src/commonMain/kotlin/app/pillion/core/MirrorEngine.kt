@@ -100,7 +100,20 @@ class MirrorEngine(
             if (seq == 2) Logger.d("session: first image sent (${jpeg.size} bytes)")
             // Wait for this frame's ACK before capturing/sending the next one. channel.close() on
             // stop() unblocks the reader, so this can't hang a teardown.
-            while (running && reader.next().serviceType != ServiceType.IMAGE_ACK) { /* skip non-ACKs */ }
+            while (running) {
+                when (reader.next().serviceType) {
+                    ServiceType.IMAGE_ACK -> break
+                    ServiceType.MAP_ZOOM_IN_REQUEST -> {
+                        (screen as? DashboardCropControl)?.cycleCropPreset(+1)
+                        sendZoomLevelUpdate()
+                    }
+                    ServiceType.MAP_ZOOM_OUT_REQUEST -> {
+                        (screen as? DashboardCropControl)?.cycleCropPreset(-1)
+                        sendZoomLevelUpdate()
+                    }
+                    // Other dashboard commands are intentionally ignored while waiting for the image ACK.
+                }
+            }
             if (!running) break
             val ackMs = nowMs() - sentAt
             ackMsTotal += ackMs
@@ -117,6 +130,12 @@ class MirrorEngine(
                 windowStart = nowMs()
             }
         }
+    }
+
+    /** Keep the NaviLite dashboard's map-control UI responsive after consuming zoom +/- as crop controls. */
+    private fun sendZoomLevelUpdate() {
+        val payload = byteArrayOf(0x07, 0x19, 0x06, 0x00, 0x30, 0x2e, 0x32, 0x20, 0x6d, 0x69)
+        channel.write(NaviLiteCodec.build(FRAME_TYPE_PHONE, ServiceType.ZOOM, PDT_POINTER, payload))
     }
 
     private fun sendImage(jpeg: ByteArray) {

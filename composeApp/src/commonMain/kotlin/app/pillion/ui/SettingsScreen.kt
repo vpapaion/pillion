@@ -36,6 +36,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,6 +54,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pillion.core.AppInfo
 import app.pillion.core.DashResolution
+import app.pillion.core.MirrorFocus
+import app.pillion.core.MirrorZoom
 import app.pillion.core.ThemeMode
 import app.pillion.core.UpdateInfo
 import app.pillion.resources.Res
@@ -73,6 +76,17 @@ internal fun SettingsScreen(
     dashEnabled: Boolean = false,
     dashResolution: DashResolution = DashResolution.DEFAULT,
     onDashResolution: (DashResolution) -> Unit = {},
+    mirrorZoomPercent: Int = MirrorZoom.DEFAULT_PERCENT,
+    onMirrorZoomPercent: (Int) -> Unit = {},
+    mirrorFocus: MirrorFocus = MirrorFocus.DEFAULT,
+    onMirrorFocus: (MirrorFocus) -> Unit = {},
+    googleMapsOverlaySupported: Boolean = false,
+    googleMapsOverlayEnabled: Boolean = false,
+    onGoogleMapsOverlayEnabled: (Boolean) -> Unit = {},
+    screenOffDirectionsEnabled: Boolean = false,
+    onScreenOffDirectionsEnabled: (Boolean) -> Unit = {},
+    onOpenNotificationAccess: () -> Unit = {},
+    onExportDiagnosticLog: () -> Unit = {},
     onSetUpDash: () -> Unit = {},
     onDisableDash: () -> Unit = {},
     bikeName: String = "",
@@ -189,14 +203,82 @@ internal fun SettingsScreen(
             SettingSlider("Image quality", "$quality", quality.toFloat(), 10f, 80f) { onQuality(it.roundToInt()) }
             GroupDivider()
             SettingSlider("Max frame rate", "$maxFps fps", maxFps.toFloat(), 5f, 30f) { onMaxFps(it.roundToInt()) }
+            GroupDivider()
+            SettingSlider(
+                label = "Dashboard zoom",
+                value = "$mirrorZoomPercent%",
+                current = mirrorZoomPercent.toFloat(),
+                min = MirrorZoom.MIN_PERCENT.toFloat(),
+                max = MirrorZoom.MAX_PERCENT.toFloat(),
+                steps = (MirrorZoom.MAX_PERCENT - MirrorZoom.MIN_PERCENT) / MirrorZoom.STEP_PERCENT - 1,
+            ) {
+                val stepped = (it / MirrorZoom.STEP_PERCENT).roundToInt() * MirrorZoom.STEP_PERCENT
+                onMirrorZoomPercent(stepped)
+            }
+            GroupDivider()
+            MirrorFocusSelector(mirrorFocus, onMirrorFocus)
         }
         Text(
             "Higher quality looks sharper but makes the picture less smooth (about 15–25 fps at 40% " +
-                "on a fast phone). The cap keeps the frame rate down to save battery and reduce heat.",
+                "on a fast phone). The cap keeps the frame rate down to save battery and reduce heat. " +
+                "Zoom enlarges maps and text by cropping the outer edges. Visible area chooses which " +
+                "part of the app remains on the Tracer 7 display: a corner or the centre. 100% shows " +
+                "the complete phone image, while 160–180% gives a much larger close-up.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 6.dp, top = 8.dp, end = 6.dp),
         )
+
+        if (googleMapsOverlaySupported) {
+            Spacer(Modifier.height(24.dp))
+            SectionHeader("Google Maps directions")
+            SettingsGroup {
+                GoogleMapsOverlaySetting(
+                    enabled = googleMapsOverlayEnabled,
+                    onEnabled = onGoogleMapsOverlayEnabled,
+                    onOpenNotificationAccess = onOpenNotificationAccess,
+                )
+                GroupDivider()
+                ScreenOffDirectionsSetting(
+                    enabled = screenOffDirectionsEnabled,
+                    onEnabled = onScreenOffDirectionsEnabled,
+                )
+            }
+            Text(
+                "When Google Maps has active turn-by-turn navigation, Pillion adds a large manoeuvre " +
+                    "arrow, distance and instruction on the left of the Tracer display. Notification " +
+                    "access is required only to read the current Google Maps instruction; the content " +
+                    "stays on this phone. Screen-off mode keeps the turn card streaming over the same " +
+                    "Bluetooth connection when the phone display is off — no Wi-Fi, ADB pairing or " +
+                    "Wireless Debugging is used. The parser is experimental and may need adjustment " +
+                    "after a future Google Maps update.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 6.dp, top = 8.dp, end = 6.dp),
+            )
+
+            Spacer(Modifier.height(24.dp))
+            SectionHeader("Diagnostics")
+            SettingsGroup {
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Export diagnostic log", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Share a log of this app's activity — useful for a bug report from the bike, " +
+                                "no computer needed.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    OutlinedButton(onClick = onExportDiagnosticLog, shape = RoundedCornerShape(12.dp)) {
+                        Text("Share")
+                    }
+                }
+            }
+        }
 
         if (dashSupported) {
             Spacer(Modifier.height(24.dp))
@@ -253,6 +335,8 @@ internal fun SettingsScreen(
 
         Spacer(Modifier.height(28.dp))
         MadeByCredit { uriHandler.openUri("https://github.com/alexandrevega") }
+        Spacer(Modifier.height(4.dp))
+        ForkCredit { uriHandler.openUri("https://github.com/vpapaion") }
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -295,6 +379,7 @@ private fun SettingSlider(
     current: Float,
     min: Float,
     max: Float,
+    steps: Int = 0,
     onChange: (Float) -> Unit,
 ) {
     Column(Modifier.padding(vertical = 4.dp)) {
@@ -306,7 +391,130 @@ private fun SettingSlider(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Slider(value = current, onValueChange = onChange, valueRange = min..max)
+        Slider(value = current, onValueChange = onChange, valueRange = min..max, steps = steps)
+    }
+}
+
+@Composable
+private fun MirrorFocusSelector(
+    selected: MirrorFocus,
+    onSelect: (MirrorFocus) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+        Text("Visible area", style = MaterialTheme.typography.bodyMedium)
+        Text(
+            "Choose the part of the app kept in view when zoom crops the image.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            MirrorFocusButton(MirrorFocus.TOP_LEFT, selected, onSelect, Modifier.weight(1f))
+            MirrorFocusButton(MirrorFocus.TOP_RIGHT, selected, onSelect, Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            MirrorFocusButton(MirrorFocus.CENTER, selected, onSelect, Modifier.fillMaxWidth(0.58f))
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            MirrorFocusButton(MirrorFocus.BOTTOM_LEFT, selected, onSelect, Modifier.weight(1f))
+            MirrorFocusButton(MirrorFocus.BOTTOM_RIGHT, selected, onSelect, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun MirrorFocusButton(
+    option: MirrorFocus,
+    selected: MirrorFocus,
+    onSelect: (MirrorFocus) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val label = when (option) {
+        MirrorFocus.TOP_LEFT -> "↖ Top left"
+        MirrorFocus.TOP_RIGHT -> "Top right ↗"
+        MirrorFocus.CENTER -> "Center"
+        MirrorFocus.BOTTOM_LEFT -> "↙ Bottom left"
+        MirrorFocus.BOTTOM_RIGHT -> "Bottom right ↘"
+    }
+    if (option == selected) {
+        Button(onClick = { onSelect(option) }, modifier = modifier, shape = RoundedCornerShape(12.dp)) {
+            Text(label, maxLines = 1)
+        }
+    } else {
+        OutlinedButton(onClick = { onSelect(option) }, modifier = modifier, shape = RoundedCornerShape(12.dp)) {
+            Text(label, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun GoogleMapsOverlaySetting(
+    enabled: Boolean,
+    onEnabled: (Boolean) -> Unit,
+    onOpenNotificationAccess: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onEnabled(!enabled) }.padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Large turn panel", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                if (enabled) "Enabled for active Google Maps navigation" else "Off",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = onEnabled)
+    }
+    if (enabled) {
+        GroupDivider()
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Notification access", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Allow Pillion, then return here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedButton(onClick = onOpenNotificationAccess, shape = RoundedCornerShape(12.dp)) {
+                Text("Open")
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun ScreenOffDirectionsSetting(
+    enabled: Boolean,
+    onEnabled: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onEnabled(!enabled) }.padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Keep directions with screen off", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                if (enabled) "Bluetooth-only screen-off turn card" else "Off",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = onEnabled)
     }
 }
 
@@ -476,6 +684,27 @@ private fun MadeByCredit(onClick: () -> Unit) {
         Text(" by ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(
             "@alexandrevega",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+
+@Composable
+private fun ForkCredit(onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Tracer 7 / Pillion Zoom fork by ",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "@vpapaion",
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.primary,

@@ -89,11 +89,12 @@ android {
     compileSdk = libs.versions.android.compileSdk.get().toInt()
 
     defaultConfig {
-        applicationId = "app.pillion"
+        // Fork build: install alongside the upstream Pillion release for easy Tracer 7 testing.
+        applicationId = "app.pillion.tracer7zoom"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 2
-        versionName = "0.2.0-alpha"
+        versionCode = 11
+        versionName = "0.2.10-tracer7-diagnostic-log"
     }
     // Exposes VERSION_NAME so AppInfo.VERSION reads the build's own version (not a hardcoded copy).
     buildFeatures {

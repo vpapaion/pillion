@@ -1,9 +1,14 @@
 package app.pillion.android
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.os.SystemClock
 import android.util.Log
 import app.pillion.core.ScreenSource
 import app.pillion.server.DashServer
+import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -18,7 +23,12 @@ import java.net.Socket
  * the helper is spawned (detached), frames flow with no network. Connection is retried so the app
  * can start before the helper and reconnect freely.
  */
-class DashStreamScreenSource : ScreenSource {
+class DashStreamScreenSource(
+    context: Context? = null,
+    private val overlayQuality: Int = 65,
+) : ScreenSource {
+    private val overlayContext = context?.applicationContext
+    private val overlayRenderer = overlayContext?.let(::GoogleMapsOverlayRenderer)
     private val thread = Thread(::readLoop).apply { isDaemon = true }
     @Volatile private var running = false
     @Volatile private var socket: Socket? = null
@@ -79,7 +89,30 @@ class DashStreamScreenSource : ScreenSource {
             return null
         }
         staleLogged = false
-        return frame
+        return addGoogleMapsOverlay(frame)
+    }
+
+    /** The privileged helper cannot read app notifications, so overlay its JPEG on the app side. */
+    private fun addGoogleMapsOverlay(frame: ByteArray): ByteArray {
+        val context = overlayContext ?: return frame
+        if (GoogleMapsNavigationState.snapshot(context) == null) return frame
+        val renderer = overlayRenderer ?: return frame
+        val bitmap = BitmapFactory.decodeByteArray(frame, 0, frame.size) ?: return frame
+        val output = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+        bitmap.recycle()
+        return try {
+            val drawn = renderer.draw(Canvas(output), output.width, output.height)
+            if (!drawn) {
+                frame
+            } else {
+                ByteArrayOutputStream().use { bytes ->
+                    output.compress(Bitmap.CompressFormat.JPEG, overlayQuality.coerceIn(40, 90), bytes)
+                    bytes.toByteArray()
+                }
+            }
+        } finally {
+            output.recycle()
+        }
     }
 
     /** Tell the helper to move the foreground app onto the dash display and start encoding. */

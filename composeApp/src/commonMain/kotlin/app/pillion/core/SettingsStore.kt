@@ -16,6 +16,22 @@ interface SettingsStore {
     fun dashResolution(): DashResolution
     fun setDashResolution(resolution: DashResolution)
 
+    /** Crop/zoom used for both normal mirroring and the dedicated dash helper. */
+    fun mirrorZoomPercent(): Int
+    fun setMirrorZoomPercent(percent: Int)
+
+    /** Area kept visible when zoom crops the captured image. */
+    fun mirrorFocus(): MirrorFocus
+    fun setMirrorFocus(focus: MirrorFocus)
+
+    /** Show a compact turn panel while Google Maps has active navigation. */
+    fun googleMapsOverlayEnabled(): Boolean
+    fun setGoogleMapsOverlayEnabled(enabled: Boolean)
+
+    /** Keep Google Maps turn directions streaming over Bluetooth while the phone display is off. */
+    fun screenOffDirectionsEnabled(): Boolean
+    fun setScreenOffDirectionsEnabled(enabled: Boolean)
+
     /** The head-unit the user picked at onboarding ([app.pillion.core.headunit.HeadUnitProfile.id]),
      *  or null if they haven't chosen yet (→ show the bike-selection screen). */
     fun selectedBikeId(): String?
