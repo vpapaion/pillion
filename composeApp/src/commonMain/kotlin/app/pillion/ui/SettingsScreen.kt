@@ -247,11 +247,14 @@ internal fun SettingsScreen(
             Text(
                 "When Google Maps has active turn-by-turn navigation, Pillion adds a large manoeuvre " +
                     "arrow, distance and instruction on the left of the Tracer display. Notification " +
-                    "access is required only to read the current Google Maps instruction; the content " +
-                    "stays on this phone. Screen-off mode keeps the turn card streaming over the same " +
-                    "Bluetooth connection when the phone display is off — no Wi-Fi, ADB pairing or " +
-                    "Wireless Debugging is used. The parser is experimental and may need adjustment " +
-                    "after a future Google Maps update.",
+                    "access reads the current Google Maps instruction locally. With screen-off " +
+                    "mode enabled, Pillion draws a GPS-positioned OpenStreetMap location map and " +
+                    "optional turn hints over Bluetooth even while the display is locked, without " +
+                    "ADB pairing or Wireless Debugging. Grant precise location when starting. " +
+                    "Map tiles require mobile data and reveal the approximate viewed area to " +
+                    "OpenStreetMap; only on-screen tiles are requested and locally cached. " +
+                    "This is NOT the Google Maps route line or a replacement for StreetCross " +
+                    "turn-by-turn navigation. Without GPS permission, the older turn card remains.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 6.dp, top = 8.dp, end = 6.dp),
@@ -507,9 +510,9 @@ private fun ScreenOffDirectionsSetting(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text("Keep directions with screen off", style = MaterialTheme.typography.bodyLarge)
+            Text("Live GPS map with screen off", style = MaterialTheme.typography.bodyLarge)
             Text(
-                if (enabled) "Bluetooth-only screen-off turn card" else "Off",
+                if (enabled) "OSM map + Google Maps turn hints via Bluetooth" else "Off",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
