@@ -168,7 +168,7 @@ internal class ScreenOffLiveMap(context: Context) {
                     val dx = (x * TILE_SIZE - worldX + centerX).toFloat()
                     val dy = (y * TILE_SIZE - worldY + centerY).toFloat()
                     canvas.drawBitmap(
-                        tile, null, RectF(dx, dy, dx + TILE_SIZE, dy + TILE_SIZE), tilePaint,
+                        tile, null, RectF(dx, dy, dx + TILE_SIZE.toFloat(), dy + TILE_SIZE.toFloat()), tilePaint,
                     )
                 }
             }
