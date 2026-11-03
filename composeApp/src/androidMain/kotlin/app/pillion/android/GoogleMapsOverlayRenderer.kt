@@ -62,6 +62,7 @@ internal class GoogleMapsOverlayRenderer(private val context: Context) {
             area = RectF(20f * scale, 22f * scale, panelWidth - 20f * scale, 112f * scale),
         )
 
+        distancePaint.textAlign = Paint.Align.CENTER
         distancePaint.textSize = 22f * scale
         val distance = direction.distance ?: "NEXT"
         canvas.drawText(distance, panelWidth / 2f, 142f * scale, distancePaint)
