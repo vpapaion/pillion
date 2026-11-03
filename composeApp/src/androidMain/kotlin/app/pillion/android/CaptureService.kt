@@ -1,5 +1,6 @@
 package app.pillion.android
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.KeyguardManager
@@ -106,11 +107,22 @@ class CaptureService : Service() {
             runCatching { startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE) }
             fail("Screen capture not granted — tap Start again"); return
         }
-        // Must be foreground (mediaProjection) before acquiring the projection (Android 10+).
-        try {
+        // Keep location active across lock on Android 14+: while-in-use location is only legal
+        // if the foreground service has location type and was launched from a visible activity.
+        // Location remains optional and never blocks the Bluetooth/navigation-only fallback.
+        val hasLocation = screenOffDirectionsEnabled &&
+            (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED)
+        val locationType = if (hasLocation) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+        val captureStarted = runCatching {
+            startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or locationType)
+        }.recoverCatching { error ->
+            if (!hasLocation) throw error
+            DiagnosticLog.w(TAG, "location foreground type unavailable; continuing without GPS map", error)
             startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } catch (e: SecurityException) {
-            DiagnosticLog.e(TAG, "media projection FGS rejected — stale capture grant", e)
+        }.isSuccess
+        if (!captureStarted) {
+            DiagnosticLog.e(TAG, "media projection FGS rejected — stale capture grant")
             resultCode = 0; resultData = null
             runCatching { startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE) }
             fail("Screen capture expired — tap Start again"); return
