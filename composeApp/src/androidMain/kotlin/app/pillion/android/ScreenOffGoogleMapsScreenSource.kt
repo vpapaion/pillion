@@ -35,6 +35,8 @@ class ScreenOffGoogleMapsScreenSource(
     private val powerManager = appContext.getSystemService(PowerManager::class.java)
     private val freshness = mirror as? MirrorFreshness
     private val renderer = GoogleMapsOverlayRenderer(appContext)
+    private val liveMap = ScreenOffLiveMap(appContext)
+    private val missingDirectionPanelPaint = Paint().apply { color = Color.argb(220, 7, 10, 14) }
     private val bitmap = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)
     private val canvas = Canvas(bitmap)
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -73,6 +75,7 @@ class ScreenOffGoogleMapsScreenSource(
 
     override fun start() {
         mirror.start()
+        liveMap.start()
         if (removeNavigationListener == null) {
             removeNavigationListener = GoogleMapsNavigationState.addListener {
                 cachedScreenOffFrame = null
@@ -153,19 +156,33 @@ class ScreenOffGoogleMapsScreenSource(
         val signature = (
             direction?.let { "${it.maneuver}|${it.distance}|${it.instruction}" }
                 ?: "${debug.seen}|${debug.ongoing}|${debug.note}|$debugText"
-            ) + "|paused=$paused"
+            ) + "|paused=$paused|mapRevision=${liveMap.revision()}"
         val cached = cachedScreenOffFrame
         if (cached != null && signature == lastDirectionSignature && paused == cachedPaused) return cached
 
-        canvas.drawColor(Color.rgb(7, 10, 14))
-        val panelDrawn = renderer.drawFullScreen(canvas, WIDTH, HEIGHT)
+        // A genuine GPS-positioned map is drawn independently of the Android display and stays
+        // up to date through Bluetooth while the phone panel is locked. Without location access
+        // we retain the old full-screen Google Maps direction card as a safe fallback.
+        val hasLiveMap = liveMap.draw(canvas, WIDTH, HEIGHT)
+        val panelDrawn = if (hasLiveMap) renderer.draw(canvas, WIDTH, HEIGHT)
+            else renderer.drawFullScreen(canvas, WIDTH, HEIGHT)
 
         // Paused gets the literal, actionable message up top — clear of the arrow/distance below —
         // instead of a status footer that would collide with them.
         val label = if (paused) "MAP CAPTURE PAUSED — REOPEN PILLION" else "PILLION • SCREEN OFF"
         canvas.drawText(label, 12f, 14f, if (paused) pausedLabelPaint else labelPaint)
 
-        if (!panelDrawn) {
+        if (!panelDrawn && hasLiveMap) {
+            // Navigation notification missing: keep the live map unobstructed on the right.
+            canvas.drawRect(0f, 20f, 162f, 218f, missingDirectionPanelPaint)
+            titlePaint.textSize = 15f
+            canvas.drawText("LIVE GPS MAP", 9f, 52f, titlePaint)
+            detailPaint.textSize = 12f
+            canvas.drawText("No turn data", 9f, 82f, detailPaint)
+            canvas.drawText("from Google Maps", 9f, 100f, detailPaint)
+            canvas.drawText("Location updates", 9f, 151f, detailPaint)
+            canvas.drawText("continue via BT", 9f, 169f, detailPaint)
+        } else if (!panelDrawn) {
             val left = 16f
             val wrapWidth = WIDTH - left * 2
             titlePaint.textSize = 17f
@@ -252,6 +269,7 @@ class ScreenOffGoogleMapsScreenSource(
     override fun stop() {
         removeNavigationListener?.invoke()
         removeNavigationListener = null
+        runCatching { liveMap.stop() }
         runCatching { mirror.stop() }
         cachedScreenOffFrame = null
         runCatching { bitmap.recycle() }
