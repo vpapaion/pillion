@@ -95,6 +95,9 @@ class MainActivity : ComponentActivity() {
                 googleMapsOverlaySupported = true,
                 onOpenNotificationAccess = ::openNotificationAccessSettings,
                 onExportDiagnosticLog = ::exportDiagnosticLog,
+                onOpenRoutePlanner = {
+                    startActivity(Intent(this, app.pillion.android.nav.RoutePlannerActivity::class.java))
+                },
             )
         }
     }

@@ -40,6 +40,7 @@ fun App(
     googleMapsOverlaySupported: Boolean = false,
     onOpenNotificationAccess: () -> Unit = {},
     onExportDiagnosticLog: () -> Unit = {},
+    onOpenRoutePlanner: (() -> Unit)? = null,
 ) {
     var themeMode by remember { mutableStateOf(settingsStore?.themeMode() ?: ThemeMode.SYSTEM) }
     PillionTheme(themeMode) {
@@ -170,6 +171,7 @@ fun App(
                     )
                 },
                 onStop = controller::stop,
+                onOpenRoutePlanner = onOpenRoutePlanner,
             )
         }
 

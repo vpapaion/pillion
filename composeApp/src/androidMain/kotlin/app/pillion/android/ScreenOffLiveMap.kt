@@ -16,6 +16,8 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Looper
 import android.os.SystemClock
+import app.pillion.android.nav.RouteNavigationState
+import app.pillion.nav.GeoPoint
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -26,7 +28,9 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.math.hypot
 import kotlin.math.ln
 import kotlin.math.sin
 import kotlin.math.tan
@@ -35,8 +39,10 @@ import kotlin.math.tan
  * Independently renders a live GPS-centered OpenStreetMap map into the existing NaviLite JPEG
  * stream. No WebView, MediaProjection, privileged display, Wi-Fi pairing, or ADB is used.
  *
- * This is a location map, not Google Maps route geometry. Google Maps notifications provide
- * separate (best-effort) turn hints through GoogleMapsOverlayRenderer.
+ * When Pillion's own navigation is active ([RouteNavigationState]) the remaining route is drawn on
+ * top of the tiles, the view turns heading-up while moving and zooms in ahead of each turn — the
+ * StreetCross-style layout. Without a Pillion route it is a north-up location map and Google Maps
+ * notifications provide separate (best-effort) turn hints through GoogleMapsOverlayRenderer.
  *
  * OSM tile usage: visible viewport only, HTTPS, identifying User-Agent, on-disk tile reuse for
  * at least seven days, attribution on every rendered frame. No background prefetch or downloads.
@@ -53,7 +59,7 @@ internal class ScreenOffLiveMap(context: Context) {
     private val tileDir = File(appContext.filesDir, "pillion-osm-visible-tiles").apply { mkdirs() }
     // Avoid an anonymous java.util.LinkedHashMap subclass: K2 multiplatform actualization can
     // crash resolving the inherited get() override on that JVM-local anonymous class.
-    private val inMemory = LinkedHashMap<String, Bitmap>(48, 0.75f, true)
+    private val inMemory = LinkedHashMap<String, Bitmap>(64, 0.75f, true)
     private val tilePaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val positionFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(40, 160, 250) }
     private val positionOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -73,13 +79,33 @@ internal class ScreenOffLiveMap(context: Context) {
         textSize = 16f
         typeface = Typeface.DEFAULT_BOLD
     }
+    private val routeCasing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(12, 60, 140)
+        style = Paint.Style.STROKE
+        strokeWidth = 11f
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val routeLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(60, 150, 255)
+        style = Paint.Style.STROKE
+        strokeWidth = 7f
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val destinationPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(220, 50, 50) }
     @Volatile private var started = false
+    /** Last trustworthy heading; kept while stopped so the map doesn't spin at traffic lights. */
+    @Volatile private var heldBearing: Float? = null
 
     private val listener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
             if (location.latitude !in -85.0511..85.0511) return
             if (location.time <= 0L) return
             latestLocation.set(Location(location))
+            if (location.hasBearing() && location.hasSpeed() && location.speed > 2.5f) heldBearing = location.bearing
+            runCatching { RouteNavigationState.onLocation(Location(location)) }
+                .onFailure { DiagnosticLog.w(TAG, "route guidance update failed", it) }
             revision.incrementAndGet()
         }
     }
@@ -118,7 +144,7 @@ internal class ScreenOffLiveMap(context: Context) {
                     }
                 }
                 runCatching {
-                    manager.requestLocationUpdates(provider, 1_500L, 3f, listener, Looper.getMainLooper())
+                    manager.requestLocationUpdates(provider, 1_000L, 2f, listener, Looper.getMainLooper())
                 }.onFailure { DiagnosticLog.w(TAG, "screen-off GPS provider unavailable: " + provider, it) }
             }
         } catch (e: SecurityException) {
@@ -142,20 +168,43 @@ internal class ScreenOffLiveMap(context: Context) {
             return false
         }
 
-        val zoom = if (fix.hasSpeed() && fix.speed > 22f) 14 else 15
+        val nav = RouteNavigationState.status as? RouteNavigationState.Status.Active
+        val toNext = nav?.guidance?.metersToNext
+        val fast = fix.hasSpeed() && fix.speed > 22f
+        val zoom = when {
+            toNext != null && toNext < 250.0 -> 16
+            fast -> 14
+            else -> 15
+        }
         val world = 1 shl zoom
-        val latRad = Math.toRadians(fix.latitude.coerceIn(-85.0511, 85.0511))
-        val longitude = fix.longitude.coerceIn(-180.0, 180.0)
-        val tileX = (longitude + 180.0) / 360.0 * world
-        val tileY = (1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * world
+        val centerWorld = project(fix.latitude, fix.longitude, zoom)
+        val worldX = centerWorld.first
+        val worldY = centerWorld.second
+
+        // Heading-up only with a Pillion route (StreetCross layout); the marker then sits low so
+        // more of the road ahead is visible. Otherwise keep the familiar north-up map.
+        val bearing = if (nav != null) heldBearing else null
         val centerX = width * 0.67f
-        val centerY = height * 0.50f
-        val worldX = tileX * TILE_SIZE
-        val worldY = tileY * TILE_SIZE
-        val leftTile = floor((worldX - centerX) / TILE_SIZE).toInt()
-        val rightTile = floor((worldX + width - centerX) / TILE_SIZE).toInt()
-        val topTile = floor((worldY - centerY) / TILE_SIZE).toInt()
-        val bottomTile = floor((worldY + height - centerY) / TILE_SIZE).toInt()
+        val centerY = if (bearing != null) height * 0.70f else height * 0.50f
+
+        canvas.save()
+        if (bearing != null) canvas.rotate(-bearing, centerX, centerY)
+        // When rotated, cover the full circle the viewport can sweep, not just the rectangle.
+        val left: Double
+        val right: Double
+        val up: Double
+        val down: Double
+        if (bearing != null) {
+            val reach = hypot(maxOf(centerX, width - centerX).toDouble(), maxOf(centerY, height - centerY).toDouble())
+            left = reach; right = reach; up = reach; down = reach
+        } else {
+            left = centerX.toDouble(); right = (width - centerX).toDouble()
+            up = centerY.toDouble(); down = (height - centerY).toDouble()
+        }
+        val leftTile = floor((worldX - left) / TILE_SIZE).toInt()
+        val rightTile = floor((worldX + right) / TILE_SIZE).toInt()
+        val topTile = floor((worldY - up) / TILE_SIZE).toInt()
+        val bottomTile = floor((worldY + down) / TILE_SIZE).toInt()
 
         for (y in topTile..bottomTile) {
             if (y < 0 || y >= world) continue
@@ -173,9 +222,12 @@ internal class ScreenOffLiveMap(context: Context) {
             }
         }
 
-        // GPS marker is rotated to bearing only when GPS supplies a reliable heading.
+        if (nav != null) drawRoute(canvas, nav, zoom, worldX, worldY, centerX, centerY, width, height)
+        canvas.restore()
+
+        // Position marker: points up in heading-up mode, otherwise rotated to the GPS bearing.
         canvas.save()
-        canvas.rotate(if (fix.hasBearing()) fix.bearing else 0f, centerX, centerY)
+        if (bearing == null && fix.hasBearing()) canvas.rotate(fix.bearing, centerX, centerY)
         val marker = Path().apply {
             moveTo(centerX, centerY - 16f)
             lineTo(centerX + 12f, centerY + 13f)
@@ -188,6 +240,65 @@ internal class ScreenOffLiveMap(context: Context) {
         canvas.restore()
         drawAttribution(canvas, width, height)
         return true
+    }
+
+    /** Web-Mercator world pixel coordinates at [zoom]. */
+    private fun project(lat: Double, lon: Double, zoom: Int): Pair<Double, Double> {
+        val world = (1 shl zoom).toDouble()
+        val latRad = Math.toRadians(lat.coerceIn(-85.0511, 85.0511))
+        val x = (lon.coerceIn(-180.0, 180.0) + 180.0) / 360.0 * world
+        val y = (1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * world
+        return Pair(x * TILE_SIZE, y * TILE_SIZE)
+    }
+
+    /** Remaining route (from the rider's snapped segment onwards) plus the destination pin. */
+    private fun drawRoute(
+        canvas: Canvas,
+        nav: RouteNavigationState.Status.Active,
+        zoom: Int,
+        worldX: Double,
+        worldY: Double,
+        centerX: Float,
+        centerY: Float,
+        width: Int,
+        height: Int,
+    ) {
+        val points = nav.route.points
+        val from = (nav.guidance?.segmentIndex ?: 0).coerceIn(0, points.size - 1)
+        val fix = latestLocation.get()
+        val limit = maxOf(width, height) * 3.0
+        val path = Path()
+        var begun = false
+        var lastX = 0f
+        var lastY = 0f
+        fun add(p: GeoPoint, force: Boolean) {
+            val (wx, wy) = project(p.lat, p.lon, zoom)
+            val sx = (wx - worldX + centerX).toFloat()
+            val sy = (wy - worldY + centerY).toFloat()
+            if (!begun) {
+                path.moveTo(sx, sy); begun = true; lastX = sx; lastY = sy
+            } else if (force || abs(sx - lastX) + abs(sy - lastY) >= 2f) {
+                path.lineTo(sx, sy); lastX = sx; lastY = sy
+            }
+        }
+        // Start the line at the rider so it never appears to begin behind them.
+        if (fix != null) add(GeoPoint(fix.latitude, fix.longitude), true)
+        for (i in from + 1 until points.size) {
+            val p = points[i]
+            add(p, i == points.size - 1)
+            // Stop once the line has run well off-screen; the rest is irrelevant this frame.
+            if (abs(lastX - centerX) > limit || abs(lastY - centerY) > limit) break
+        }
+        canvas.drawPath(path, routeCasing)
+        canvas.drawPath(path, routeLine)
+
+        val (dx, dy) = project(nav.route.destination.lat, nav.route.destination.lon, zoom)
+        val px = (dx - worldX + centerX).toFloat()
+        val py = (dy - worldY + centerY).toFloat()
+        if (abs(px - centerX) < limit && abs(py - centerY) < limit) {
+            canvas.drawCircle(px, py, 8f, positionOutline)
+            canvas.drawCircle(px, py, 7f, destinationPaint)
+        }
     }
 
     private fun getOrRequestTile(key: String, zoom: Int, x: Int, y: Int): Bitmap? {
@@ -213,7 +324,7 @@ internal class ScreenOffLiveMap(context: Context) {
                     ).openConnection() as HttpURLConnection
                     connection.setRequestProperty(
                         "User-Agent",
-                        "PillionZoom-Tracer7/0.2.11 (+https://github.com/vpapaion/pillion)",
+                        "Pillion-Tracer7/" + app.pillion.core.AppInfo.VERSION + " (+https://github.com/vpapaion/pillion)",
                     )
                     connection.connectTimeout = 5_000
                     connection.readTimeout = 6_000
@@ -249,7 +360,7 @@ internal class ScreenOffLiveMap(context: Context) {
     private fun rememberTile(key: String, tile: Bitmap) {
         synchronized(inMemory) {
             inMemory[key] = tile
-            while (inMemory.size > 32) {
+            while (inMemory.size > 48) {
                 val iterator = inMemory.entries.iterator()
                 if (iterator.hasNext()) {
                     iterator.next()

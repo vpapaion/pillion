@@ -52,6 +52,26 @@
             </intent-filter>
         </activity>
 
+        <!-- Pillion's own turn-by-turn: destination search, Google Maps "Share", and geo: links. -->
+        <activity
+            android:name="app.pillion.android.nav.RoutePlannerActivity"
+            android:exported="true"
+            android:label="Pillion route"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="geo" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name="app.pillion.android.CaptureService"
             android:exported="false"

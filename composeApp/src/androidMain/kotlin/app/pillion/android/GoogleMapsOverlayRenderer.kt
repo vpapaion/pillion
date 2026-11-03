@@ -44,6 +44,11 @@ internal class GoogleMapsOverlayRenderer(private val context: Context) {
 
     fun draw(canvas: Canvas, width: Int, height: Int): Boolean {
         val direction = GoogleMapsNavigationState.snapshot(context) ?: return false
+        return drawPanel(canvas, width, height, direction, "GOOGLE MAPS")
+    }
+
+    /** Same compact panel for any turn source (Google Maps notification or Pillion's own route). */
+    fun drawPanel(canvas: Canvas, width: Int, height: Int, direction: GoogleMapsDirection, source: String): Boolean {
         if (width <= 0 || height <= 0) return false
 
         val scale = height / 240f
@@ -53,7 +58,7 @@ internal class GoogleMapsOverlayRenderer(private val context: Context) {
         canvas.drawLine(panelWidth - scale, 12f * scale, panelWidth - scale, height - 12f * scale, separatorPaint)
 
         mapsPaint.textSize = 10f * scale
-        canvas.drawText("GOOGLE MAPS", 10f * scale, 16f * scale, mapsPaint)
+        canvas.drawText(source, 10f * scale, 16f * scale, mapsPaint)
 
         arrowPaint.strokeWidth = 8f * scale
         drawManeuver(

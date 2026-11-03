@@ -8,7 +8,11 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.PowerManager
 import android.os.SystemClock
+import app.pillion.android.nav.RouteNavigationState
 import app.pillion.core.DashboardCropControl
+import app.pillion.core.GoogleMapsDirection
+import app.pillion.nav.NavFormat
+import java.util.Calendar
 import app.pillion.core.MirrorFreshness
 import app.pillion.core.ScreenSource
 import java.io.ByteArrayOutputStream
@@ -25,6 +29,11 @@ import java.io.ByteArrayOutputStream
  * pre-lock bitmap forever. So on screen-on this source withholds the mirror until [mirror]'s
  * [MirrorFreshness] signal confirms a *newly captured* frame — never a merely *cached* one — and
  * falls back to a "paused" directions card instead if the projection turns out to be dead.
+ *
+ * **Pillion navigation.** While a Pillion route is active ([RouteNavigationState]) the dash always
+ * shows Pillion's own map + turn panel — screen on or off, like StreetCross — because that frame is
+ * rendered independently of the phone display. Ending the route returns to normal mirroring (via
+ * the same fresh-frame verification as a screen-on).
  */
 class ScreenOffGoogleMapsScreenSource(
     context: Context,
@@ -64,6 +73,19 @@ class ScreenOffGoogleMapsScreenSource(
     @Volatile private var cachedScreenOffFrame: ByteArray? = null
     @Volatile private var cachedPaused = false
     private var removeNavigationListener: (() -> Unit)? = null
+    private var removeRouteListener: (() -> Unit)? = null
+    private val stripPaint = Paint().apply { color = Color.argb(215, 9, 14, 18) }
+    private val stripText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 14f
+        typeface = Typeface.DEFAULT_BOLD
+        textAlign = Paint.Align.RIGHT
+    }
+    private val navLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(95, 170, 255)
+        textSize = 13f
+        typeface = Typeface.DEFAULT_BOLD
+    }
 
     // Screen-on resume verification (see class doc): armed the moment the screen turns interactive
     // after having been off, cleared once a genuinely new mirror frame is confirmed.
@@ -75,7 +97,14 @@ class ScreenOffGoogleMapsScreenSource(
 
     override fun start() {
         mirror.start()
+        RouteNavigationState.restore(appContext)
         liveMap.start()
+        if (removeRouteListener == null) {
+            removeRouteListener = RouteNavigationState.addListener {
+                cachedScreenOffFrame = null
+                lastDirectionSignature = null
+            }
+        }
         if (removeNavigationListener == null) {
             removeNavigationListener = GoogleMapsNavigationState.addListener {
                 cachedScreenOffFrame = null
@@ -106,6 +135,12 @@ class ScreenOffGoogleMapsScreenSource(
     }
 
     private fun computeFrame(): ByteArray? {
+        if (RouteNavigationState.hasDestination()) {
+            // Treat like screen-off so that ending the route re-verifies the mirror before use.
+            wasInteractive = false
+            verifyingResume = false
+            return navigationFrame()
+        }
         val interactive = powerManager?.isInteractive != false
         if (!interactive) {
             wasInteractive = false
@@ -147,6 +182,80 @@ class ScreenOffGoogleMapsScreenSource(
         }
         // Still within the grace window: keep showing directions rather than a possibly-stale frame.
         return screenOffFrame(paused = false)
+    }
+
+    /** Pillion's own route guidance: heading-up map, route line, turn panel, distance/time/ETA. */
+    private fun navigationFrame(): ByteArray {
+        val status = RouteNavigationState.status
+        val signature = "nav|" + when (status) {
+            is RouteNavigationState.Status.Active -> status.guidance?.let {
+                "${it.next?.beginIndex}|${it.metersToNext.toInt() / 10}|${it.remainingMeters.toInt() / 50}"
+            } + "|" + status.route.points.size
+            else -> status.toString()
+        } + "|mapRevision=${liveMap.revision()}"
+        val cached = cachedScreenOffFrame
+        if (cached != null && signature == lastDirectionSignature) return cached
+
+        val hasLiveMap = liveMap.draw(canvas, WIDTH, HEIGHT)
+        when (status) {
+            is RouteNavigationState.Status.Active -> {
+                val g = status.guidance
+                val next = g?.next
+                if (next != null) {
+                    val text = if (next.isArrival) status.route.destinationName
+                        else next.street ?: next.instruction
+                    renderer.drawPanel(
+                        canvas, WIDTH, HEIGHT,
+                        GoogleMapsDirection(text, NavFormat.distance(g.metersToNext), next.maneuver),
+                        "PILLION NAV",
+                    )
+                    drawTripStrip(g.remainingMeters, g.remainingSeconds)
+                } else {
+                    navMessage("PILLION NAV", "Route ready", status.route.destinationName)
+                }
+            }
+            is RouteNavigationState.Status.Calculating ->
+                navMessage("PILLION NAV", "Calculating route…", status.destinationName)
+            is RouteNavigationState.Status.Failed ->
+                navMessage("PILLION NAV", "No route yet", status.message)
+            is RouteNavigationState.Status.Arrived ->
+                navMessage("PILLION NAV", "Arrived", status.destinationName)
+            RouteNavigationState.Status.Idle -> Unit
+        }
+        if (!hasLiveMap && status !is RouteNavigationState.Status.Active) {
+            detailPaint.textSize = 11f
+            canvas.drawText("Waiting for GPS…", 172f, 140f, detailPaint)
+        }
+
+        val encoded = ByteArrayOutputStream().use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(40, 90), out)
+            out.toByteArray()
+        }
+        lastDirectionSignature = signature
+        cachedScreenOffFrame = encoded
+        cachedPaused = false
+        return encoded
+    }
+
+    private fun navMessage(label: String, title: String, detail: String) {
+        canvas.drawRect(0f, 0f, 162f, HEIGHT.toFloat(), missingDirectionPanelPaint)
+        canvas.drawText(label, 10f, 16f, navLabelPaint)
+        titlePaint.textSize = 16f
+        drawWrapped(title, 10f, 56f, 146f, 2, titlePaint, 20f)
+        detailPaint.textSize = 12f
+        drawWrapped(detail, 10f, 110f, 146f, 5, detailPaint, 16f)
+    }
+
+    /** "12.4 km · 18 min · 14:32" across the top of the map area. */
+    private fun drawTripStrip(remainingMeters: Double, remainingSeconds: Double) {
+        val now = Calendar.getInstance()
+        val etaMinutes = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE) +
+            (remainingSeconds / 60.0).toInt()
+        val text = NavFormat.distance(remainingMeters) + "  ·  " + NavFormat.duration(remainingSeconds) +
+            "  ·  " + NavFormat.clock(etaMinutes)
+        val w = stripText.measureText(text) + 16f
+        canvas.drawRoundRect(WIDTH - w - 4f, 4f, WIDTH - 4f, 26f, 8f, 8f, stripPaint)
+        canvas.drawText(text, WIDTH - 12f, 20f, stripText)
     }
 
     private fun screenOffFrame(paused: Boolean): ByteArray {
@@ -269,6 +378,8 @@ class ScreenOffGoogleMapsScreenSource(
     override fun stop() {
         removeNavigationListener?.invoke()
         removeNavigationListener = null
+        removeRouteListener?.invoke()
+        removeRouteListener = null
         runCatching { liveMap.stop() }
         runCatching { mirror.stop() }
         cachedScreenOffFrame = null
