@@ -51,10 +51,9 @@ internal class ScreenOffLiveMap(context: Context) {
     private val pending = ConcurrentHashMap.newKeySet<String>()
     private val retryAfter = ConcurrentHashMap<String, Long>()
     private val tileDir = File(appContext.filesDir, "pillion-osm-visible-tiles").apply { mkdirs() }
-    private val inMemory = object : LinkedHashMap<String, Bitmap>(48, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>?): Boolean =
-            size > 32
-    }
+    // Avoid an anonymous java.util.LinkedHashMap subclass: K2 multiplatform actualization can
+    // crash resolving the inherited get() override on that JVM-local anonymous class.
+    private val inMemory = LinkedHashMap<String, Bitmap>(48, 0.75f, true)
     private val tilePaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val positionFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(40, 160, 250) }
     private val positionOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -196,7 +195,7 @@ internal class ScreenOffLiveMap(context: Context) {
         val file = File(tileDir, key + ".png")
         if (file.isFile && file.length() > 128L) {
             BitmapFactory.decodeFile(file.absolutePath)?.let {
-                synchronized(inMemory) { inMemory[key] = it }
+                rememberTile(key, it)
                 return it
             }
             file.delete()
@@ -231,7 +230,7 @@ internal class ScreenOffLiveMap(context: Context) {
                     }
                     val tile = BitmapFactory.decodeFile(file.absolutePath)
                         ?: throw IllegalStateException("Invalid OSM tile")
-                    synchronized(inMemory) { inMemory[key] = tile }
+                    rememberTile(key, tile)
                     revision.incrementAndGet()
                 } catch (error: Exception) {
                     retryAfter[key] = SystemClock.elapsedRealtime() + 120_000L
@@ -245,6 +244,19 @@ internal class ScreenOffLiveMap(context: Context) {
             pending.remove(key)
         }
         return null
+    }
+
+    private fun rememberTile(key: String, tile: Bitmap) {
+        synchronized(inMemory) {
+            inMemory[key] = tile
+            while (inMemory.size > 32) {
+                val iterator = inMemory.entries.iterator()
+                if (iterator.hasNext()) {
+                    iterator.next()
+                    iterator.remove()
+                }
+            }
+        }
     }
 
     private fun drawAttribution(canvas: Canvas, width: Int, height: Int) {
