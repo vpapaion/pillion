@@ -16,6 +16,8 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.util.Log
 import android.view.Surface
+import app.pillion.core.MirrorFocus
+import app.pillion.core.MirrorZoom
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
@@ -43,7 +45,7 @@ import java.net.Socket
  *
  * Launch detached so it outlives the spawning ADB connection:
  *   CLASSPATH=<base.apk> nohup app_process / app.pillion.server.DashServer \
- *     <virtual-w> <virtual-h> <dpi> <quality> <output-w> <output-h> <component> &
+ *     <virtual-w> <virtual-h> <dpi> <quality> <output-w> <output-h> <zoom-percent> <focus> <component> &
  */
 object DashServer {
 
@@ -80,6 +82,8 @@ object DashServer {
     private var outputWidth = 480
     private var outputHeight = 240
     private var quality = 40
+    private var zoomPercent = MirrorZoom.DEFAULT_PERCENT
+    private var mirrorFocus = MirrorFocus.DEFAULT
     private var lastEncodeMs = 0L
     private var encodeWindowStartMs = 0L
     private var encodeFrames = 0
@@ -111,7 +115,18 @@ object DashServer {
         val outputArg = args.getOrNull(4)?.toIntOrNull()
         outputWidth = outputArg ?: 480
         outputHeight = args.getOrNull(5)?.toIntOrNull()?.takeIf { outputArg != null } ?: 240
-        val launchComponent = args.getOrNull(if (outputArg == null) 4 else 6)
+        val zoomOrComponentIndex = if (outputArg == null) 4 else 6
+        val zoomOrComponent = args.getOrNull(zoomOrComponentIndex)
+        val parsedZoom = zoomOrComponent?.toIntOrNull()
+        zoomPercent = MirrorZoom.clamp(parsedZoom ?: MirrorZoom.DEFAULT_PERCENT)
+        val focusOrComponent = if (parsedZoom == null) null else args.getOrNull(zoomOrComponentIndex + 1)
+        val parsedFocus = MirrorFocus.parse(focusOrComponent)
+        mirrorFocus = parsedFocus ?: MirrorFocus.DEFAULT
+        val launchComponent = when {
+            parsedZoom == null -> zoomOrComponent
+            parsedFocus != null -> args.getOrNull(zoomOrComponentIndex + 2)
+            else -> focusOrComponent // backward compatibility: older launch command had component here
+        }
         // launchComponent example: com.waze/com.waze.FreeMapAppActivity
 
         try {
@@ -134,7 +149,8 @@ object DashServer {
             Log.i(
                 TAG,
                 "trusted display created id=$displayId virtual=${virtualWidth}x$virtualHeight " +
-                    "output=${outputWidth}x$outputHeight dpi=$dpi",
+                    "output=${outputWidth}x$outputHeight dpi=$dpi zoom=$zoomPercent% " +
+                    "focus=${mirrorFocus.name}",
             )
 
             // The display starts empty (idle, no encoding). The app sends PROMOTE on screen-off and
@@ -600,14 +616,24 @@ object DashServer {
         } else {
             Bitmap.createBitmap(padded, 0, 0, virtualWidth, virtualHeight)
         }
-        val output = if (bitmap.width == outputWidth && bitmap.height == outputHeight) {
+        val cropWidth = MirrorZoom.cropSize(bitmap.width, zoomPercent)
+        val cropHeight = MirrorZoom.cropSize(bitmap.height, zoomPercent)
+        val cropLeft = mirrorFocus.cropLeft(bitmap.width, cropWidth)
+        val cropTop = mirrorFocus.cropTop(bitmap.height, cropHeight)
+        val cropped = if (cropWidth == bitmap.width && cropHeight == bitmap.height) {
             bitmap
         } else {
-            Bitmap.createScaledBitmap(bitmap, outputWidth, outputHeight, true)
+            Bitmap.createBitmap(bitmap, cropLeft, cropTop, cropWidth, cropHeight)
+        }
+        val output = if (cropped.width == outputWidth && cropped.height == outputHeight) {
+            cropped
+        } else {
+            Bitmap.createScaledBitmap(cropped, outputWidth, outputHeight, true)
         }
         val out = ByteArrayOutputStream()
         output.compress(Bitmap.CompressFormat.JPEG, quality, out)
-        if (output !== bitmap) output.recycle()
+        if (output !== cropped) output.recycle()
+        if (cropped !== bitmap) cropped.recycle()
         if (bitmap !== padded) bitmap.recycle()
         padded.recycle()
         return out.toByteArray()

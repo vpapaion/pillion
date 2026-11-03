@@ -177,7 +177,7 @@ class AdbBootstrapActivity : ComponentActivity() {
                             runCatching {
                                 // nohup + & : the helper outlives this ADB stream, so it keeps serving
                                 // frames after Wi-Fi drops on the bike.
-                                val cmd = "CLASSPATH=\$(pm path app.pillion | grep base.apk | cut -d: -f2) " +
+                                val cmd = "CLASSPATH=\$(pm path $packageName | grep base.apk | cut -d: -f2) " +
                                     "nohup app_process / app.pillion.server.DashServer " +
                                     "960 480 160 40 480 240 $component >/dev/null 2>&1 &"
                                 val stream = PillionAdb.getInstance(applicationContext).openExecStream(cmd)

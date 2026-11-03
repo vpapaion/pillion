@@ -1,0 +1,74 @@
+name: Build Pillion Tracer7 Live GPS Map APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/tracer7-display-zoom
+      - agent/tracer7-standalone-live-map
+      - agent/tracer7-dash-nav
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+
+      - name: Install Android SDK 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and test
+        run: |
+          chmod +x gradlew
+          ./gradlew --stacktrace :composeApp:testDebugUnitTest :composeApp:assembleDebug
+
+      - name: Name APK
+        run: cp composeApp/build/outputs/apk/debug/composeApp-debug.apk Pillion-Zoom-Tracer7-Live-GPS-Map.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pillion-Zoom-Tracer7-Live-GPS-Map
+          path: Pillion-Zoom-Tracer7-Live-GPS-Map.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish direct-download release
+        if: github.event_name == 'push' && github.ref_name == 'agent/tracer7-dash-nav'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=v0.3.0-tracer7-dash-nav
+          cp Pillion-Zoom-Tracer7-Live-GPS-Map.apk Pillion-Tracer7-Dash-Nav-0.3.0.apk
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" Pillion-Tracer7-Dash-Nav-0.3.0.apk --clobber
+          else
+            gh release create "$TAG" Pillion-Tracer7-Dash-Nav-0.3.0.apk \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "Pillion Tracer 7 – dash navigation 0.3.0 (test build)" \
+              --notes "Experimental debug build from PR #3: Pillion's own turn-by-turn on the Tracer 7 dash, working with the phone locked. Not yet verified on a real bike."
+          fi
