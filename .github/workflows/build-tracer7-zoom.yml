@@ -1,10 +1,11 @@
-name: Build Pillion Screen-Resume APK
+name: Build Pillion Tracer7 Live GPS Map APK
 
 on:
   workflow_dispatch:
   push:
     branches:
       - agent/tracer7-display-zoom
+      - agent/tracer7-standalone-live-map
   pull_request:
     branches:
       - main
@@ -29,7 +30,9 @@ jobs:
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
 
       - name: Install Android SDK 35
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
@@ -43,12 +46,12 @@ jobs:
           ./gradlew --stacktrace :composeApp:testDebugUnitTest :composeApp:assembleDebug
 
       - name: Name APK
-        run: cp composeApp/build/outputs/apk/debug/composeApp-debug.apk Pillion-Zoom-Tracer7-Diagnostic-Log.apk
+        run: cp composeApp/build/outputs/apk/debug/composeApp-debug.apk Pillion-Zoom-Tracer7-Live-GPS-Map.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Pillion-Zoom-Tracer7-Diagnostic-Log
-          path: Pillion-Zoom-Tracer7-Diagnostic-Log.apk
+          name: Pillion-Zoom-Tracer7-Live-GPS-Map
+          path: Pillion-Zoom-Tracer7-Live-GPS-Map.apk
           if-no-files-found: error
           retention-days: 30

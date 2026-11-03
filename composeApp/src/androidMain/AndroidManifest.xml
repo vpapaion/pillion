@@ -30,6 +30,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Optional live GPS map when the phone display is off (started from a visible activity). -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <application
         android:name="app.pillion.android.PillionApp"
@@ -51,7 +55,7 @@
         <service
             android:name="app.pillion.android.CaptureService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection|connectedDevice" />
+            android:foregroundServiceType="mediaProjection|connectedDevice|location" />
 
         <!-- Lets Settings > Export diagnostic log share pillion_diagnostic.log via the normal Android
              share sheet (WhatsApp/email/Drive) — no computer/adb needed at the roadside. -->

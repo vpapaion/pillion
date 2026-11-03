@@ -73,7 +73,12 @@ class MainActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { granted ->
-        if (granted.values.all { it }) requestProjection()
+        // GPS location is optional. Denying it must not block the existing Bluetooth mirror and
+        // notification-driven turn card; the standalone live map will show a permission hint.
+        if (granted.filterKeys {
+                it != Manifest.permission.ACCESS_FINE_LOCATION &&
+                    it != Manifest.permission.ACCESS_COARSE_LOCATION
+            }.values.all { it }) requestProjection()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -142,6 +147,10 @@ class MainActivity : ComponentActivity() {
     private fun requiredPermissions(): List<String> = buildList {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) add(Manifest.permission.BLUETOOTH_CONNECT)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+        if (!pendingSdl && settingsStore.screenOffDirectionsEnabled()) {
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
     }
 
     private fun openNotificationAccessSettings() {
