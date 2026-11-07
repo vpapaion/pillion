@@ -9,6 +9,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.location.Location
@@ -53,9 +54,10 @@ internal class ScreenOffLiveMap(context: Context) {
     private val locationManager = appContext.getSystemService(LocationManager::class.java)
     private val latestLocation = AtomicReference<Location?>(null)
     private val revision = AtomicLong(0L)
-    private val workers = Executors.newFixedThreadPool(2)
+    private val workers = Executors.newFixedThreadPool(4)
     private val pending = ConcurrentHashMap.newKeySet<String>()
     private val retryAfter = ConcurrentHashMap<String, Long>()
+    private val failures = ConcurrentHashMap<String, Int>()
     private val tileDir = File(appContext.filesDir, "pillion-osm-visible-tiles").apply { mkdirs() }
     // Avoid an anonymous java.util.LinkedHashMap subclass: K2 multiplatform actualization can
     // crash resolving the inherited get() override on that JVM-local anonymous class.
@@ -97,6 +99,13 @@ internal class ScreenOffLiveMap(context: Context) {
     @Volatile private var started = false
     /** Last trustworthy heading; kept while stopped so the map doesn't spin at traffic lights. */
     @Volatile private var heldBearing: Float? = null
+    /**
+     * Zoom only changes with hysteresis and a minimum dwell: every change needs a whole new tile
+     * set, and flapping between levels (e.g. riding at ~80 km/h, or approaching turns) used to
+     * leave the map blank while moving — it only filled in once the bike stopped.
+     */
+    private var currentZoom = 15
+    private var zoomChangedAt = 0L
 
     private val listener = object : LocationListener {
         override fun onLocationChanged(location: Location) {
@@ -170,12 +179,7 @@ internal class ScreenOffLiveMap(context: Context) {
 
         val nav = RouteNavigationState.status as? RouteNavigationState.Status.Active
         val toNext = nav?.guidance?.metersToNext
-        val fast = fix.hasSpeed() && fix.speed > 22f
-        val zoom = when {
-            toNext != null && toNext < 250.0 -> 16
-            fast -> 14
-            else -> 15
-        }
+        val zoom = stableZoom(if (fix.hasSpeed()) fix.speed else 0f, toNext)
         val world = 1 shl zoom
         val centerWorld = project(fix.latitude, fix.longitude, zoom)
         val worldX = centerWorld.first
@@ -212,14 +216,26 @@ internal class ScreenOffLiveMap(context: Context) {
                 val normalizedX = ((x % world) + world) % world
                 val key = zoom.toString() + "-" + normalizedX + "-" + y
                 val tile = getOrRequestTile(key, zoom, normalizedX, y)
+                val dx = (x * TILE_SIZE - worldX + centerX).toFloat()
+                val dy = (y * TILE_SIZE - worldY + centerY).toFloat()
+                val dest = RectF(dx, dy, dx + TILE_SIZE.toFloat(), dy + TILE_SIZE.toFloat())
                 if (tile != null) {
-                    val dx = (x * TILE_SIZE - worldX + centerX).toFloat()
-                    val dy = (y * TILE_SIZE - worldY + centerY).toFloat()
-                    canvas.drawBitmap(
-                        tile, null, RectF(dx, dy, dx + TILE_SIZE.toFloat(), dy + TILE_SIZE.toFloat()), tilePaint,
-                    )
+                    canvas.drawBitmap(tile, null, dest, tilePaint)
+                } else {
+                    // While the exact tile loads, upscale a cached lower-zoom tile so the map is
+                    // never blank (slightly blurry beats an empty dash at speed).
+                    drawParentFallback(canvas, zoom, normalizedX, y, dest)
                 }
             }
+        }
+
+        // Keep a coarse (zoom-2) tile under the rider loaded too: one request covers 16 detail tiles
+        // and gives drawParentFallback something to show whenever detail tiles lag behind.
+        if (zoom >= 2) {
+            val cz = zoom - 2
+            val ctx = ((floor(worldX / TILE_SIZE).toInt() shr 2) % (1 shl cz) + (1 shl cz)) % (1 shl cz)
+            val cty = floor(worldY / TILE_SIZE).toInt() shr 2
+            if (cty in 0 until (1 shl cz)) getOrRequestTile(cz.toString() + "-" + ctx + "-" + cty, cz, ctx, cty)
         }
 
         if (nav != null) drawRoute(canvas, nav, zoom, worldX, worldY, centerX, centerY, width, height)
@@ -240,6 +256,47 @@ internal class ScreenOffLiveMap(context: Context) {
         canvas.restore()
         drawAttribution(canvas, width, height)
         return true
+    }
+
+    private fun stableZoom(speed: Float, toNext: Double?): Int {
+        val now = SystemClock.elapsedRealtime()
+        val nearTurn = toNext != null && toNext < 200.0 && speed < 20f
+        val stillNearTurn = toNext != null && toNext < 400.0
+        val target = when (currentZoom) {
+            16 -> if (stillNearTurn) 16 else if (speed > 25f) 14 else 15
+            14 -> if (nearTurn) 16 else if (speed > 18f) 14 else 15
+            else -> if (nearTurn) 16 else if (speed > 25f) 14 else 15
+        }
+        if (target != currentZoom && (zoomChangedAt == 0L || now - zoomChangedAt > 8_000L)) {
+            DiagnosticLog.d(TAG, "live map zoom ${currentZoom} -> $target (speed ${"%.1f".format(speed)} m/s)")
+            currentZoom = target
+            zoomChangedAt = now
+        } else if (zoomChangedAt == 0L) {
+            zoomChangedAt = now
+        }
+        return currentZoom
+    }
+
+    private fun drawParentFallback(canvas: Canvas, zoom: Int, x: Int, y: Int, dest: RectF) {
+        for (up in 1..3) {
+            val pz = zoom - up
+            if (pz < 0) return
+            val px = x shr up
+            val py = y shr up
+            val key = pz.toString() + "-" + px + "-" + py
+            val parent = synchronized(inMemory) { inMemory[key] } ?: run {
+                val file = File(tileDir, key + ".png")
+                if (file.isFile && file.length() > 128L) {
+                    BitmapFactory.decodeFile(file.absolutePath)?.also { rememberTile(key, it) }
+                } else null
+            } ?: continue
+            val sub = parent.width shr up
+            if (sub <= 0) return
+            val sx = (x - (px shl up)) * sub
+            val sy = (y - (py shl up)) * sub
+            canvas.drawBitmap(parent, Rect(sx, sy, sx + sub, sy + sub), dest, tilePaint)
+            return
+        }
     }
 
     /** Web-Mercator world pixel coordinates at [zoom]. */
@@ -326,10 +383,12 @@ internal class ScreenOffLiveMap(context: Context) {
                         "User-Agent",
                         "Pillion-Tracer7/" + app.pillion.core.AppInfo.VERSION + " (+https://github.com/vpapaion/pillion)",
                     )
-                    connection.connectTimeout = 5_000
-                    connection.readTimeout = 6_000
-                    if (connection.responseCode != HttpURLConnection.HTTP_OK) {
-                        throw IllegalStateException("OSM HTTP " + connection.responseCode)
+                    connection.connectTimeout = 8_000
+                    connection.readTimeout = 10_000
+                    val code = connection.responseCode
+                    if (code != HttpURLConnection.HTTP_OK) {
+                        if (code == 429 || code == 403) failures[key] = 10 // server asks us to back off
+                        throw IllegalStateException("OSM HTTP " + code)
                     }
                     val temp = File(tileDir, key + ".part")
                     connection.inputStream.use { input ->
@@ -342,10 +401,17 @@ internal class ScreenOffLiveMap(context: Context) {
                     val tile = BitmapFactory.decodeFile(file.absolutePath)
                         ?: throw IllegalStateException("Invalid OSM tile")
                     rememberTile(key, tile)
+                    failures.remove(key)
+                    retryAfter.remove(key)
                     revision.incrementAndGet()
                 } catch (error: Exception) {
-                    retryAfter[key] = SystemClock.elapsedRealtime() + 120_000L
-                    DiagnosticLog.w(TAG, "screen-off map tile not available", error)
+                    // Mobile data on a moving bike drops out briefly; retry soon instead of leaving
+                    // a hole in the map for minutes. 4 s, 8 s, 16 s, 32 s, then once a minute.
+                    val n = (failures[key] ?: 0) + 1
+                    failures[key] = n
+                    val delay = minOf(60_000L, 4_000L shl (n - 1).coerceAtMost(4))
+                    retryAfter[key] = SystemClock.elapsedRealtime() + delay
+                    DiagnosticLog.w(TAG, "map tile $key failed (#$n, retry in ${delay / 1000}s): ${error.message}")
                 } finally {
                     connection?.disconnect()
                     pending.remove(key)

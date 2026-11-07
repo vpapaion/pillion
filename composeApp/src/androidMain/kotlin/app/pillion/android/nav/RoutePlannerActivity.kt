@@ -4,7 +4,10 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -95,6 +98,15 @@ class RoutePlannerActivity : ComponentActivity() {
         sharedIntent.value = intent
     }
 
+    private fun batteryUnrestricted(): Boolean =
+        getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(packageName) != false
+
+    private fun requestBatteryExemption() {
+        val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+        val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        runCatching { startActivity(direct) }.onFailure { runCatching { startActivity(fallback) } }
+    }
+
     private fun hasLocation() =
         checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
             checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
@@ -121,6 +133,14 @@ class RoutePlannerActivity : ComponentActivity() {
         var results by remember { mutableStateOf<List<Place>>(emptyList()) }
         var busy by remember { mutableStateOf(false) }
         var error by remember { mutableStateOf<String?>(null) }
+        var batteryOk by remember { mutableStateOf(batteryUnrestricted()) }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            // Re-check after returning from the system dialog.
+            while (true) {
+                kotlinx.coroutines.delay(1_500)
+                batteryOk = batteryUnrestricted()
+            }
+        }
 
         DisposableEffect(Unit) {
             val remove = RouteNavigationState.addListener { status = RouteNavigationState.status }
@@ -190,6 +210,24 @@ class RoutePlannerActivity : ComponentActivity() {
             )
             Spacer(Modifier.height(14.dp))
             StatusCard(status, onStop = { RouteNavigationState.stop(applicationContext) })
+            if (!batteryOk) {
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.10f),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Battery saver may freeze the dash", fontWeight = FontWeight.Bold)
+                        Text(
+                            "With the screen off, Android can throttle GPS for this app. Allow it to run " +
+                                "unrestricted (on Xiaomi also: App info → Battery saver → No restrictions).",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        OutlinedButton(onClick = { requestBatteryExemption() }) { Text("Don't restrict battery") }
+                    }
+                }
+            }
             Spacer(Modifier.height(14.dp))
 
             Row(verticalAlignment = Alignment.CenterVertically) {

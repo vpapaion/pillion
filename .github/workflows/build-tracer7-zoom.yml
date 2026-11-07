@@ -41,6 +41,18 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Use stable signing key (so updates install over each other)
+        env:
+          KEYSTORE_B64: ${{ secrets.PILLION_DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            mkdir -p ~/.android
+            echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+            echo "Signing with the stable Pillion test key."
+          else
+            echo "PILLION_DEBUG_KEYSTORE_B64 not set — using a throwaway debug key (uninstall needed between builds)."
+          fi
+
       - name: Build and test
         run: |
           chmod +x gradlew
@@ -62,13 +74,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=v0.3.0-tracer7-dash-nav
-          cp Pillion-Zoom-Tracer7-Live-GPS-Map.apk Pillion-Tracer7-Dash-Nav-0.3.0.apk
+          TAG=v0.3.1-tracer7-dash-nav
+          cp Pillion-Zoom-Tracer7-Live-GPS-Map.apk Pillion-Tracer7-Dash-Nav-0.3.1.apk
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" Pillion-Tracer7-Dash-Nav-0.3.0.apk --clobber
+            gh release upload "$TAG" Pillion-Tracer7-Dash-Nav-0.3.1.apk --clobber
           else
-            gh release create "$TAG" Pillion-Tracer7-Dash-Nav-0.3.0.apk \
+            gh release create "$TAG" Pillion-Tracer7-Dash-Nav-0.3.1.apk \
               --target "$GITHUB_SHA" --prerelease \
-              --title "Pillion Tracer 7 – dash navigation 0.3.0 (test build)" \
-              --notes "Experimental debug build from PR #3: Pillion's own turn-by-turn on the Tracer 7 dash, working with the phone locked. Not yet verified on a real bike."
+              --title "Pillion Tracer 7 – dash navigation 0.3.1 (test build)" \
+              --notes "Test build from PR #3. Fixes the map going blank while riding (stable zoom, low-zoom fallback tiles, fast tile retries) and adds a battery-restriction prompt so GPS keeps updating with the screen off. Uninstall older test builds first if Android refuses the update."
           fi
