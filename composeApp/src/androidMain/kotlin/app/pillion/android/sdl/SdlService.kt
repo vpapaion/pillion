@@ -14,23 +14,31 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import app.pillion.android.AndroidSettingsStore
+import app.pillion.android.MirrorViewportState
 import app.pillion.core.Logger
 import app.pillion.core.MirrorState
+import app.pillion.core.MirrorZoom
 import com.smartdevicelink.managers.SdlManager
 import com.smartdevicelink.managers.SdlManagerListener
 import com.smartdevicelink.managers.lifecycle.LifecycleConfigurationUpdate
 import com.smartdevicelink.managers.lifecycle.OnSystemCapabilityListener
 import com.smartdevicelink.protocol.enums.FunctionID
 import com.smartdevicelink.proxy.RPCNotification
+import com.smartdevicelink.proxy.RPCResponse
 import com.smartdevicelink.proxy.rpc.OnButtonPress
 import com.smartdevicelink.proxy.rpc.OnHMIStatus
 import com.smartdevicelink.proxy.rpc.OnTouchEvent
+import com.smartdevicelink.proxy.rpc.SubscribeButton
 import com.smartdevicelink.proxy.rpc.VideoStreamingCapability
 import com.smartdevicelink.proxy.rpc.enums.AppHMIType
+import com.smartdevicelink.proxy.rpc.enums.ButtonName
+import com.smartdevicelink.proxy.rpc.enums.ButtonPressMode
 import com.smartdevicelink.proxy.rpc.enums.HMILevel
 import com.smartdevicelink.proxy.rpc.enums.Language
 import com.smartdevicelink.proxy.rpc.enums.SystemCapabilityType
 import com.smartdevicelink.proxy.rpc.listeners.OnRPCNotificationListener
+import com.smartdevicelink.proxy.rpc.listeners.OnRPCResponseListener
 import com.smartdevicelink.streaming.video.SdlRemoteDisplay
 import com.smartdevicelink.streaming.video.VideoStreamingParameters
 import com.smartdevicelink.transport.BaseTransportConfig
@@ -60,6 +68,7 @@ class SdlService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        AndroidSettingsStore(applicationContext) // initialise persisted zoom/crop state
         startInForeground(false)
     }
 
@@ -194,6 +203,7 @@ class SdlService : Service() {
             override fun onStart() {
                 Logger.d("sdl: ==== REGISTERED — head unit accepted us ====")
                 Logger.d("sdl: now activate the app on the dash (HMI FULL) — video starts then")
+                subscribeJoystickButtons()
             }
 
             override fun onDestroy() {
@@ -244,6 +254,7 @@ class SdlService : Service() {
             override fun onNotified(notification: RPCNotification) {
                 val bp = notification as OnButtonPress
                 Logger.d("sdl BIKE BUTTON: ${bp.buttonName} (${bp.buttonPressMode})")
+                handleJoystickButton(bp)
             }
         }
         builder.setRPCNotificationListeners(notifs)
@@ -251,6 +262,47 @@ class SdlService : Service() {
         sdlManager = mgr
         mgr.start()
         Logger.d("sdl: SdlManager.start() called — waiting for the head unit…")
+    }
+
+    /** Subscribe to all standard SDL navigation controls plus common Yamaha fallbacks. */
+    private fun subscribeJoystickButtons() {
+        val manager = sdlManager ?: return
+        JOYSTICK_BUTTONS.forEach { button ->
+            val request = SubscribeButton(button)
+            request.setOnRPCResponseListener(object : OnRPCResponseListener() {
+                override fun onResponse(correlationId: Int, response: RPCResponse) {
+                    if (response.success == true) {
+                        Logger.d("sdl joystick: subscribed to $button")
+                    } else {
+                        Logger.d(
+                            "sdl joystick: $button unavailable (${response.resultCode}: ${response.info ?: ""})",
+                        )
+                    }
+                }
+            })
+            runCatching { manager.sendRPC(request) }
+                .onFailure { Logger.e("sdl joystick: subscribe $button failed", it) }
+        }
+    }
+
+    /** Map the bike's joystick/buttons to a persistent crop position. */
+    private fun handleJoystickButton(press: OnButtonPress) {
+        val button = press.buttonName ?: return
+        val step = if (press.buttonPressMode == ButtonPressMode.LONG) LONG_STEP_PERCENT else STEP_PERCENT
+        when (button.name) {
+            "NAV_PAN_UP", "TUNEUP" -> MirrorViewportState.nudge(this, 0, -step)
+            "NAV_PAN_DOWN", "TUNEDOWN" -> MirrorViewportState.nudge(this, 0, step)
+            "NAV_PAN_LEFT", "SEEKLEFT" -> MirrorViewportState.nudge(this, -step, 0)
+            "NAV_PAN_RIGHT", "SEEKRIGHT" -> MirrorViewportState.nudge(this, step, 0)
+            "NAV_PAN_UP_LEFT" -> MirrorViewportState.nudge(this, -step, -step)
+            "NAV_PAN_UP_RIGHT" -> MirrorViewportState.nudge(this, step, -step)
+            "NAV_PAN_DOWN_LEFT" -> MirrorViewportState.nudge(this, -step, step)
+            "NAV_PAN_DOWN_RIGHT" -> MirrorViewportState.nudge(this, step, step)
+            "OK", "NAV_CENTER_LOCATION" -> MirrorViewportState.center(this)
+            "NAV_ZOOM_IN" -> MirrorViewportState.adjustZoom(this, MirrorZoom.STEP_PERCENT)
+            "NAV_ZOOM_OUT" -> MirrorViewportState.adjustZoom(this, -MirrorZoom.STEP_PERCENT)
+            else -> return
+        }
     }
 
     /**
@@ -414,6 +466,29 @@ class SdlService : Service() {
 
         /** User tapped Stop — tear the session down AND suppress auto-revival until the next Start. */
         const val ACTION_STOP = "app.pillion.sdl.STOP"
+
+        private const val STEP_PERCENT = 8
+        private const val LONG_STEP_PERCENT = 20
+        // Resolve newer navigation-button names at runtime so the app stays compatible with older
+        // SDL Java libraries and head units that only expose OK/SEEK/TUNE.
+        private val JOYSTICK_BUTTONS = listOf(
+            "OK",
+            "SEEKLEFT",
+            "SEEKRIGHT",
+            "TUNEUP",
+            "TUNEDOWN",
+            "NAV_CENTER_LOCATION",
+            "NAV_ZOOM_IN",
+            "NAV_ZOOM_OUT",
+            "NAV_PAN_UP",
+            "NAV_PAN_UP_RIGHT",
+            "NAV_PAN_RIGHT",
+            "NAV_PAN_DOWN_RIGHT",
+            "NAV_PAN_DOWN",
+            "NAV_PAN_DOWN_LEFT",
+            "NAV_PAN_LEFT",
+            "NAV_PAN_UP_LEFT",
+        ).mapNotNull { name -> runCatching { ButtonName.valueOf(name) }.getOrNull() }
 
         private const val PREFS = "sdl_state"
         private const val KEY_USER_STOPPED = "user_stopped"
