@@ -54,6 +54,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Re-asks for screen sharing after Android ends it on lock (Android 15 QPR1+). -->
+        <activity
+            android:name="app.pillion.android.ProjectionResumeActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- Pillion's own turn-by-turn: destination search, Google Maps "Share", and geo: links. -->
         <activity
             android:name="app.pillion.android.nav.RoutePlannerActivity"

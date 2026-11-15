@@ -3,6 +3,7 @@ package app.pillion.android
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
+import android.app.PendingIntent
 import android.app.KeyguardManager
 import android.app.NotificationManager
 import android.app.Service
@@ -46,6 +47,12 @@ class CaptureService : Service() {
     private var engine: MirrorEngine? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var dashEnabled = false
+    // Kept so a re-granted screen capture (after Android stops sharing on lock) can be rebuilt.
+    private var sessionQuality = 40
+    private var sessionZoom = MirrorZoom.DEFAULT_PERCENT
+    private var sessionFocus = MirrorFocus.fromName(null)
+    private var sessionLocationType = 0
+    private var screenOffSource: ScreenOffGoogleMapsScreenSource? = null
     private var dashSwitch: SwitchableScreenSource? = null
     private var screenReceiver: BroadcastReceiver? = null
     private var keyguardManager: KeyguardManager? = null
@@ -57,6 +64,10 @@ class CaptureService : Service() {
         DiagnosticLog.attach(this)
         if (intent?.action == ACTION_STOP) {
             stopSelf()
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_RESUME_PROJECTION) {
+            resumeProjection()
             return START_NOT_STICKY
         }
         acquireWakeLock()
@@ -114,6 +125,10 @@ class CaptureService : Service() {
             (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                 checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED)
         val locationType = if (hasLocation) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+        sessionLocationType = locationType
+        sessionQuality = quality
+        sessionZoom = zoomPercent
+        sessionFocus = mirrorFocus
         val captureStarted = runCatching {
             startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or locationType)
         }.recoverCatching { error ->
@@ -141,9 +156,12 @@ class CaptureService : Service() {
             DiagnosticLog.d(TAG, "screen-off directions: Bluetooth-only mode enabled")
             ScreenOffGoogleMapsScreenSource(
                 context = this,
-                mirror = mirror,
+                initialMirror = mirror,
                 quality = maxOf(quality, 65),
-            )
+            ).also { source ->
+                screenOffSource = source
+                source.onMirrorLost = { promptForScreenCapture() }
+            }
         } else if (dashEnabled) {
             val switch = SwitchableScreenSource(
                 mirror,
@@ -414,6 +432,7 @@ class CaptureService : Service() {
     }
 
     override fun onDestroy() {
+        screenOffSource = null
         engine?.stop()
         DashHelper.stopWatchdog() // stop first, so it doesn't respawn the helper we're tearing down
         screenReceiver?.let { runCatching { unregisterReceiver(it) } }
@@ -459,6 +478,76 @@ class CaptureService : Service() {
         }
     }
 
+    /**
+     * Android 15 QPR1+ ends screen sharing when the phone locks, and a capture grant is single-use,
+     * so the shared app can't come back on its own. Ask the rider for a new grant right after
+     * unlock: open the consent dialog directly when the OS allows it (e.g. Xiaomi "display pop-up
+     * windows while running in background"), and always post a heads-up notification as a backup.
+     */
+    private fun promptForScreenCapture() {
+        DiagnosticLog.w(TAG, "screen capture ended by the system (lock) — asking to share again")
+        val open = Intent(this, ProjectionResumeActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+        runCatching { startActivity(open) }
+            .onFailure { DiagnosticLog.d(TAG, "re-grant: direct launch not allowed (${it.javaClass.simpleName})") }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(
+                NotificationChannel(RESUME_CHANNEL_ID, "Resume dash mirroring", NotificationManager.IMPORTANCE_HIGH),
+            )
+            val pending = PendingIntent.getActivity(
+                this, 7, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            val n = Notification.Builder(this, RESUME_CHANNEL_ID)
+                .setContentTitle("Show your app on the dash again")
+                .setContentText("Android stopped screen sharing when the phone locked. Tap to share again.")
+                .setSmallIcon(android.R.drawable.ic_menu_share)
+                .setContentIntent(pending)
+                .setAutoCancel(true)
+                .setCategory(Notification.CATEGORY_STATUS)
+                .build()
+            runCatching { nm.notify(RESUME_NOTIF_ID, n) }
+        }
+    }
+
+    /** Attaches a re-granted screen capture to the running session (no Bluetooth reconnect). */
+    private fun resumeProjection() {
+        val data = resultData
+        val source = screenOffSource
+        if (resultCode == 0 || data == null || source == null) {
+            DiagnosticLog.w(TAG, "re-grant: nothing to resume (grant=${data != null}, session=${source != null})")
+            return
+        }
+        // Android 14+: a new consent must be paired with (re)entering the mediaProjection FGS type.
+        val ok = runCatching {
+            startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or sessionLocationType)
+        }.recoverCatching {
+            startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        }.isSuccess
+        if (!ok) {
+            DiagnosticLog.e(TAG, "re-grant: mediaProjection foreground type rejected")
+            resultCode = 0; resultData = null
+            return
+        }
+        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        val projection = runCatching { mpm.getMediaProjection(resultCode, data) }.getOrNull()
+        resultCode = 0; resultData = null
+        if (projection == null) {
+            DiagnosticLog.e(TAG, "re-grant: getMediaProjection returned null")
+            return
+        }
+        val mirror = MediaProjectionScreenSource(this, projection, sessionQuality, sessionZoom, sessionFocus)
+        if (runCatching { mirror.start() }.isFailure) {
+            DiagnosticLog.e(TAG, "re-grant: new capture failed to start")
+            return
+        }
+        source.replaceMirror(mirror)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching { getSystemService(NotificationManager::class.java).cancel(RESUME_NOTIF_ID) }
+        }
+        updateNotification("Screen sharing resumed")
+    }
+
     private fun buildNotification(text: String): Notification {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
@@ -487,6 +576,9 @@ class CaptureService : Service() {
 
     companion object {
         private const val NOTIF_ID = 1
+        private const val RESUME_NOTIF_ID = 2
+        private const val RESUME_CHANNEL_ID = "pillion-resume"
+        const val ACTION_RESUME_PROJECTION = "app.pillion.action.RESUME_PROJECTION"
         private const val CHANNEL_ID = "pillion"
         private const val TAG = "Pillion"
         private const val MAX_SESSION_MS = 3L * 60 * 60 * 1000 // 3h safety cap

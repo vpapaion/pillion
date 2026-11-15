@@ -37,12 +37,17 @@ import java.io.ByteArrayOutputStream
  */
 class ScreenOffGoogleMapsScreenSource(
     context: Context,
-    private val mirror: ScreenSource,
+    initialMirror: ScreenSource,
     private val quality: Int = 65,
 ) : ScreenSource, DashboardCropControl {
+    /** Swappable: after Android stops screen sharing on lock, a re-granted capture replaces it. */
+    @Volatile private var mirror: ScreenSource = initialMirror
+    /** Called once per lost capture when the screen is back on and the old capture is dead. */
+    @Volatile var onMirrorLost: (() -> Unit)? = null
+    @Volatile private var mirrorLostReported = false
     private val appContext = context.applicationContext
     private val powerManager = appContext.getSystemService(PowerManager::class.java)
-    private val freshness = mirror as? MirrorFreshness
+    private val freshness: MirrorFreshness? get() = mirror as? MirrorFreshness
     private val renderer = GoogleMapsOverlayRenderer(appContext)
     private val liveMap = ScreenOffLiveMap(appContext)
     private val missingDirectionPanelPaint = Paint().apply { color = Color.argb(220, 7, 10, 14) }
@@ -113,6 +118,22 @@ class ScreenOffGoogleMapsScreenSource(
         }
     }
 
+    /**
+     * Swaps in a freshly granted capture. The next screen-on frame goes through the normal
+     * fresh-frame verification before the dash switches back from the map to the shared app.
+     */
+    fun replaceMirror(newMirror: ScreenSource) {
+        val old = mirror
+        mirror = newMirror
+        mirrorLostReported = false
+        wasInteractive = false
+        verifyingResume = false
+        cachedScreenOffFrame = null
+        lastDirectionSignature = null
+        DiagnosticLog.d(TAG, "screen-off directions: new screen capture attached")
+        if (old !== newMirror) runCatching { old.stop() }
+    }
+
     override fun latestFrame(): ByteArray? = try {
         computeFrame()
     } catch (t: Throwable) {
@@ -166,6 +187,11 @@ class ScreenOffGoogleMapsScreenSource(
             return mirror.latestFrame()
         }
         if (fresh.isCaptureStopped()) {
+            if (!mirrorLostReported) {
+                mirrorLostReported = true
+                runCatching { onMirrorLost?.invoke() }
+                    .onFailure { DiagnosticLog.w(TAG, "screen-off directions: re-grant prompt failed", it) }
+            }
             if (!captureConfirmedDead) {
                 captureConfirmedDead = true
                 DiagnosticLog.w(TAG, "screen-off directions: MediaProjection was stopped by the system")

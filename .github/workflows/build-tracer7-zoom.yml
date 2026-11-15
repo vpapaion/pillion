@@ -74,13 +74,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG=v0.3.1-tracer7-dash-nav
-          cp Pillion-Zoom-Tracer7-Live-GPS-Map.apk Pillion-Tracer7-Dash-Nav-0.3.1.apk
+          TAG=v0.3.2-tracer7-dash-nav
+          cp Pillion-Zoom-Tracer7-Live-GPS-Map.apk Pillion-Tracer7-Dash-Nav-0.3.2.apk
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" Pillion-Tracer7-Dash-Nav-0.3.1.apk --clobber
+            gh release upload "$TAG" Pillion-Tracer7-Dash-Nav-0.3.2.apk --clobber
           else
-            gh release create "$TAG" Pillion-Tracer7-Dash-Nav-0.3.1.apk \
+            gh release create "$TAG" Pillion-Tracer7-Dash-Nav-0.3.2.apk \
               --target "$GITHUB_SHA" --prerelease \
-              --title "Pillion Tracer 7 – dash navigation 0.3.1 (test build)" \
-              --notes "Test build from PR #3. Fixes the map going blank while riding (stable zoom, low-zoom fallback tiles, fast tile retries) and adds a battery-restriction prompt so GPS keeps updating with the screen off. Uninstall older test builds first if Android refuses the update."
+              --title "Pillion Tracer 7 – dash navigation 0.3.2 (test build)" \
+              --notes "Test build from PR #3. After Android stops screen sharing on lock, unlocking now asks to share again (pop-up or notification) and puts your app back on the dash without reconnecting. Includes 0.3.1 map fixes. Uninstall older test builds first if Android refuses the update."
           fi
