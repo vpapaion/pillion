@@ -1,6 +1,8 @@
 package app.pillion.ios
 
 import app.pillion.core.DashResolution
+import app.pillion.core.MirrorFocus
+import app.pillion.core.MirrorZoom
 import app.pillion.core.SettingsStore
 import app.pillion.core.ThemeMode
 import platform.Foundation.NSUserDefaults
@@ -32,6 +34,34 @@ class IosSettingsStore : SettingsStore {
         defaults.setObject(resolution.name, forKey = DASH_RES_KEY)
     }
 
+    override fun mirrorZoomPercent(): Int {
+        val saved = defaults.integerForKey(MIRROR_ZOOM_KEY).toInt()
+        return MirrorZoom.clamp(if (saved == 0) MirrorZoom.DEFAULT_PERCENT else saved)
+    }
+
+    override fun setMirrorZoomPercent(percent: Int) {
+        defaults.setInteger(MirrorZoom.clamp(percent).toLong(), forKey = MIRROR_ZOOM_KEY)
+    }
+
+    override fun mirrorFocus(): MirrorFocus =
+        MirrorFocus.fromName(defaults.stringForKey(MIRROR_FOCUS_KEY))
+
+    override fun setMirrorFocus(focus: MirrorFocus) {
+        defaults.setObject(focus.name, forKey = MIRROR_FOCUS_KEY)
+    }
+
+    override fun googleMapsOverlayEnabled(): Boolean = false
+
+    override fun setGoogleMapsOverlayEnabled(enabled: Boolean) {
+        // Android-only: iOS does not expose another app's navigation notification content.
+    }
+
+    override fun screenOffDirectionsEnabled(): Boolean = false
+
+    override fun setScreenOffDirectionsEnabled(enabled: Boolean) {
+        // Android/Tracer 7 only: iOS cannot read another app's navigation notification.
+    }
+
     override fun selectedBikeId(): String? = defaults.stringForKey(BIKE_KEY)
 
     override fun setSelectedBikeId(id: String) {
@@ -42,6 +72,8 @@ class IosSettingsStore : SettingsStore {
         const val THEME_KEY = "theme_mode"
         const val DASH_ENABLED_KEY = "dash_enabled"
         const val DASH_RES_KEY = "dash_resolution"
+        const val MIRROR_ZOOM_KEY = "mirror_zoom_percent"
+        const val MIRROR_FOCUS_KEY = "mirror_focus"
         const val BIKE_KEY = "selected_bike_id"
     }
 }

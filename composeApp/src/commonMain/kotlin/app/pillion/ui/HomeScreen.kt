@@ -48,6 +48,7 @@ internal fun HomeScreen(
     onOpenSettings: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onOpenRoutePlanner: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier.fillMaxSize()
@@ -82,6 +83,13 @@ internal fun HomeScreen(
                     StatusDisplay(state)
                 }
             }
+        }
+        if (onOpenRoutePlanner != null) {
+            androidx.compose.material3.OutlinedButton(
+                onClick = onOpenRoutePlanner,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Navigate on dash (works with phone locked)") }
+            Spacer(Modifier.height(10.dp))
         }
         PrimaryButton(state, onStart, onStop)
     }

@@ -1,7 +1,9 @@
 package app.pillion.android
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
+import android.app.PendingIntent
 import android.app.KeyguardManager
 import android.app.NotificationManager
 import android.app.Service
@@ -17,11 +19,12 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
-import android.util.Log
 import app.pillion.core.DashResolution
 import app.pillion.core.MirrorEngine
+import app.pillion.core.MirrorFocus
 import app.pillion.core.ScreenSource
 import app.pillion.core.MirrorState
+import app.pillion.core.MirrorZoom
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -44,6 +47,12 @@ class CaptureService : Service() {
     private var engine: MirrorEngine? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var dashEnabled = false
+    // Kept so a re-granted screen capture (after Android stops sharing on lock) can be rebuilt.
+    private var sessionQuality = 40
+    private var sessionZoom = MirrorZoom.DEFAULT_PERCENT
+    private var sessionFocus = MirrorFocus.fromName(null)
+    private var sessionLocationType = 0
+    private var screenOffSource: ScreenOffGoogleMapsScreenSource? = null
     private var dashSwitch: SwitchableScreenSource? = null
     private var screenReceiver: BroadcastReceiver? = null
     private var keyguardManager: KeyguardManager? = null
@@ -52,8 +61,13 @@ class CaptureService : Service() {
     @Volatile private var dashSawLockedKeyguard = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        DiagnosticLog.attach(this)
         if (intent?.action == ACTION_STOP) {
             stopSelf()
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_RESUME_PROJECTION) {
+            resumeProjection()
             return START_NOT_STICKY
         }
         acquireWakeLock()
@@ -61,9 +75,23 @@ class CaptureService : Service() {
 
         val quality = intent?.getIntExtra(EXTRA_QUALITY, 40) ?: 40
         val maxFps = intent?.getIntExtra(EXTRA_MAX_FPS, 15) ?: 15
+        val zoomPercent = MirrorZoom.clamp(
+            intent?.getIntExtra(EXTRA_MIRROR_ZOOM, MirrorZoom.DEFAULT_PERCENT)
+                ?: MirrorZoom.DEFAULT_PERCENT,
+        )
+        val mirrorFocus = MirrorFocus.fromName(intent?.getStringExtra(EXTRA_MIRROR_FOCUS))
         val dashResolution = dashResolutionFrom(intent)
         dashEnabled = intent?.getBooleanExtra(EXTRA_DASH_ENABLED, false) ?: false
-        startSession(quality, maxFps, dashResolution)
+        val screenOffDirectionsEnabled =
+            intent?.getBooleanExtra(EXTRA_SCREEN_OFF_DIRECTIONS_ENABLED, false) ?: false
+        startSession(
+            quality,
+            maxFps,
+            dashResolution,
+            zoomPercent,
+            mirrorFocus,
+            screenOffDirectionsEnabled,
+        )
         return START_NOT_STICKY
     }
 
@@ -73,7 +101,14 @@ class CaptureService : Service() {
      * (foreground app on a trusted display) whenever the phone is locked — **mirror while unlocked,
      * dash while locked**. The helper only encodes while locked, so it costs no extra battery idle.
      */
-    private fun startSession(quality: Int, maxFps: Int, dashResolution: DashResolution) {
+    private fun startSession(
+        quality: Int,
+        maxFps: Int,
+        dashResolution: DashResolution,
+        zoomPercent: Int,
+        mirrorFocus: MirrorFocus,
+        screenOffDirectionsEnabled: Boolean,
+    ) {
         // A screen-capture grant is single-use. If it's missing or stale (e.g. cleared when the app
         // crashed + restarted), starting a mediaProjection foreground service throws SecurityException
         // — which would HARD-CRASH the app. So validate first, and on a stale grant fall back to a
@@ -83,11 +118,26 @@ class CaptureService : Service() {
             runCatching { startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE) }
             fail("Screen capture not granted — tap Start again"); return
         }
-        // Must be foreground (mediaProjection) before acquiring the projection (Android 10+).
-        try {
+        // Keep location active across lock on Android 14+: while-in-use location is only legal
+        // if the foreground service has location type and was launched from a visible activity.
+        // Location remains optional and never blocks the Bluetooth/navigation-only fallback.
+        val hasLocation = screenOffDirectionsEnabled &&
+            (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED)
+        val locationType = if (hasLocation) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
+        sessionLocationType = locationType
+        sessionQuality = quality
+        sessionZoom = zoomPercent
+        sessionFocus = mirrorFocus
+        val captureStarted = runCatching {
+            startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or locationType)
+        }.recoverCatching { error ->
+            if (!hasLocation) throw error
+            DiagnosticLog.w(TAG, "location foreground type unavailable; continuing without GPS map", error)
             startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } catch (e: SecurityException) {
-            Log.e(TAG, "media projection FGS rejected — stale capture grant", e)
+        }.isSuccess
+        if (!captureStarted) {
+            DiagnosticLog.e(TAG, "media projection FGS rejected — stale capture grant")
             resultCode = 0; resultData = null
             runCatching { startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE) }
             fail("Screen capture expired — tap Start again"); return
@@ -99,11 +149,24 @@ class CaptureService : Service() {
         // The grant is single-use; clear it so a later restart can't reuse a dead token (→ crash).
         resultCode = 0; resultData = null
         // Create the mirror display NOW, while the projection token is fresh.
-        val mirror = MediaProjectionScreenSource(this, projection, quality)
+        val mirror = MediaProjectionScreenSource(this, projection, quality, zoomPercent, mirrorFocus)
         runCatching { mirror.start() }
 
-        val source: ScreenSource = if (dashEnabled) {
-            val switch = SwitchableScreenSource(mirror, DashStreamScreenSource())
+        val source: ScreenSource = if (screenOffDirectionsEnabled) {
+            DiagnosticLog.d(TAG, "screen-off directions: Bluetooth-only mode enabled")
+            ScreenOffGoogleMapsScreenSource(
+                context = this,
+                initialMirror = mirror,
+                quality = maxOf(quality, 65),
+            ).also { source ->
+                screenOffSource = source
+                source.onMirrorLost = { promptForScreenCapture() }
+            }
+        } else if (dashEnabled) {
+            val switch = SwitchableScreenSource(
+                mirror,
+                DashStreamScreenSource(this, overlayQuality = maxOf(quality, 65)),
+            )
             dashSwitch = switch
             // Spawn or reuse the helper. Starting it needs Wireless Debugging, but an already-running
             // helper serves over loopback and survives Wi-Fi loss.
@@ -113,11 +176,13 @@ class CaptureService : Service() {
                         this@CaptureService,
                         quality,
                         dashResolution,
+                        zoomPercent,
+                        mirrorFocus,
                         preferExisting = true,
                     )
                 }
                     .onFailure {
-                        Log.e(TAG, "dash: helper unavailable", it)
+                        DiagnosticLog.e(TAG, "dash: helper unavailable", it)
                         fail(it.message ?: "Dash helper unavailable")
                     }
             }
@@ -125,7 +190,7 @@ class CaptureService : Service() {
             registerKeyguardUnlockListener()
             // Self-heal: if the helper is killed (adbd restart on Wi-Fi/debug loss), respawn it over
             // the loopback channel so the dash recovers instead of freezing.
-            DashHelper.startWatchdog(this, quality, dashResolution)
+            DashHelper.startWatchdog(this, quality, dashResolution, zoomPercent, mirrorFocus)
             switch
         } else {
             mirror
@@ -144,13 +209,13 @@ class CaptureService : Service() {
                     when (action) {
                         Intent.ACTION_SCREEN_OFF -> {
                             if (dashPromotedAtMs != 0L) {
-                                Log.d(TAG, "dash: screen off while already promoted; keeping dash active")
+                                DiagnosticLog.d(TAG, "dash: screen off while already promoted; keeping dash active")
                                 return@launch
                             }
                             val component = foregroundComponent()
-                            Log.d(TAG, "dash: screen off; foreground=$component")
+                            DiagnosticLog.d(TAG, "dash: screen off; foreground=$component")
                             if (component == null) {
-                                Log.w(TAG, "dash: no foreground app; usage access may be missing")
+                                DiagnosticLog.w(TAG, "dash: no foreground app; usage access may be missing")
                             } else {
                                 dashSwitch?.promote(component)
                                 dashPromotedAtMs = System.currentTimeMillis()
@@ -167,7 +232,7 @@ class CaptureService : Service() {
                                 } else {
                                     // The helper briefly wakes the device during PROMOTE so the virtual display
                                     // can render. Ignore that synthetic wake; panel-off retries will blank display 0.
-                                    Log.d(TAG, "dash: ignoring promotion wake (${ageMs}ms)")
+                                    DiagnosticLog.d(TAG, "dash: ignoring promotion wake (${ageMs}ms)")
                                     schedulePromotionWakeSettleCheck(promotedAt, ageMs)
                                 }
                             }
@@ -201,7 +266,7 @@ class CaptureService : Service() {
     private fun registerKeyguardUnlockListener() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         if (checkSelfPermission(PERMISSION_SUBSCRIBE_KEYGUARD) != PackageManager.PERMISSION_GRANTED) {
-            Log.d(TAG, "dash: keyguard unlock listener unavailable; permission not granted")
+            DiagnosticLog.d(TAG, "dash: keyguard unlock listener unavailable; permission not granted")
             return
         }
         runCatching {
@@ -217,7 +282,7 @@ class CaptureService : Service() {
                     scope.launch(Dispatchers.IO) {
                         if (locked) {
                             if (dashPromotedAtMs != 0L) dashSawLockedKeyguard = true
-                            Log.d(TAG, "dash: keyguard locked")
+                            DiagnosticLog.d(TAG, "dash: keyguard locked")
                         } else {
                             onKeyguardUnlocked()
                         }
@@ -231,9 +296,9 @@ class CaptureService : Service() {
                 .invoke(manager, executor, listener)
             keyguardManager = manager
             keyguardListener = listener
-            Log.d(TAG, "dash: keyguard unlock listener registered")
+            DiagnosticLog.d(TAG, "dash: keyguard unlock listener registered")
         }.onFailure {
-            Log.d(TAG, "dash: keyguard unlock listener unavailable: ${it.javaClass.simpleName}")
+            DiagnosticLog.d(TAG, "dash: keyguard unlock listener unavailable: ${it.javaClass.simpleName}")
             keyguardManager = null
             keyguardListener = null
         }
@@ -259,7 +324,7 @@ class CaptureService : Service() {
         if (dashSawLockedKeyguard || ageMs >= RETURN_TO_PHONE_GRACE_MS) {
             returnToPhone("keyguard unlocked")
         } else {
-            Log.d(TAG, "dash: ignoring keyguard-unlocked callback before lock settled (${ageMs}ms)")
+            DiagnosticLog.d(TAG, "dash: ignoring keyguard-unlocked callback before lock settled (${ageMs}ms)")
         }
     }
 
@@ -268,7 +333,7 @@ class CaptureService : Service() {
             Thread.sleep(LOCK_STATE_SAMPLE_DELAY_MS)
             if (dashPromotedAtMs == promotedAt && isKeyguardLockedNow()) {
                 dashSawLockedKeyguard = true
-                Log.d(TAG, "dash: keyguard locked after promotion")
+                DiagnosticLog.d(TAG, "dash: keyguard locked after promotion")
             }
         }
     }
@@ -281,14 +346,14 @@ class CaptureService : Service() {
             if (dashSawLockedKeyguard && isKeyguardUnlockedNow()) {
                 returnToPhone("unlock after promotion wake")
             } else {
-                Log.d(TAG, "dash: promotion wake settled; keeping dash active")
+                DiagnosticLog.d(TAG, "dash: promotion wake settled; keeping dash active")
             }
         }
     }
 
     private fun returnToPhone(reason: String, force: Boolean = false) {
         if (!force && dashPromotedAtMs == 0L) return
-        Log.d(TAG, "dash: $reason; returning to phone")
+        DiagnosticLog.d(TAG, "dash: $reason; returning to phone")
         dashPromotedAtMs = 0L
         dashSawLockedKeyguard = false
         dashSwitch?.demote()
@@ -309,7 +374,7 @@ class CaptureService : Service() {
         val usm = getSystemService(UsageStatsManager::class.java) ?: return null
         val now = System.currentTimeMillis()
         val events = runCatching { usm.queryEvents(now - 60_000, now) }
-            .onFailure { Log.w(TAG, "dash: usage query failed", it) }
+            .onFailure { DiagnosticLog.w(TAG, "dash: usage query failed", it) }
             .getOrNull() ?: return null
         val event = UsageEvents.Event()
         var component: String? = null
@@ -321,14 +386,14 @@ class CaptureService : Service() {
                     ?.component
                     ?.flattenToString()
                 if (candidate == null) {
-                    Log.d(TAG, "dash: ignoring foreground package without launcher: ${event.packageName}")
+                    DiagnosticLog.d(TAG, "dash: ignoring foreground package without launcher: ${event.packageName}")
                 } else {
                     component = candidate
-                    Log.d(TAG, "dash: foreground candidate=$component")
+                    DiagnosticLog.d(TAG, "dash: foreground candidate=$component")
                 }
             }
         }
-        if (component == null) Log.w(TAG, "dash: UsageStats returned no launchable foreground app")
+        if (component == null) DiagnosticLog.w(TAG, "dash: UsageStats returned no launchable foreground app")
         return component
     }
 
@@ -367,6 +432,7 @@ class CaptureService : Service() {
     }
 
     override fun onDestroy() {
+        screenOffSource = null
         engine?.stop()
         DashHelper.stopWatchdog() // stop first, so it doesn't respawn the helper we're tearing down
         screenReceiver?.let { runCatching { unregisterReceiver(it) } }
@@ -412,6 +478,76 @@ class CaptureService : Service() {
         }
     }
 
+    /**
+     * Android 15 QPR1+ ends screen sharing when the phone locks, and a capture grant is single-use,
+     * so the shared app can't come back on its own. Ask the rider for a new grant right after
+     * unlock: open the consent dialog directly when the OS allows it (e.g. Xiaomi "display pop-up
+     * windows while running in background"), and always post a heads-up notification as a backup.
+     */
+    private fun promptForScreenCapture() {
+        DiagnosticLog.w(TAG, "screen capture ended by the system (lock) — asking to share again")
+        val open = Intent(this, ProjectionResumeActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+        runCatching { startActivity(open) }
+            .onFailure { DiagnosticLog.d(TAG, "re-grant: direct launch not allowed (${it.javaClass.simpleName})") }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(
+                NotificationChannel(RESUME_CHANNEL_ID, "Resume dash mirroring", NotificationManager.IMPORTANCE_HIGH),
+            )
+            val pending = PendingIntent.getActivity(
+                this, 7, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            val n = Notification.Builder(this, RESUME_CHANNEL_ID)
+                .setContentTitle("Show your app on the dash again")
+                .setContentText("Android stopped screen sharing when the phone locked. Tap to share again.")
+                .setSmallIcon(android.R.drawable.ic_menu_share)
+                .setContentIntent(pending)
+                .setAutoCancel(true)
+                .setCategory(Notification.CATEGORY_STATUS)
+                .build()
+            runCatching { nm.notify(RESUME_NOTIF_ID, n) }
+        }
+    }
+
+    /** Attaches a re-granted screen capture to the running session (no Bluetooth reconnect). */
+    private fun resumeProjection() {
+        val data = resultData
+        val source = screenOffSource
+        if (resultCode == 0 || data == null || source == null) {
+            DiagnosticLog.w(TAG, "re-grant: nothing to resume (grant=${data != null}, session=${source != null})")
+            return
+        }
+        // Android 14+: a new consent must be paired with (re)entering the mediaProjection FGS type.
+        val ok = runCatching {
+            startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or sessionLocationType)
+        }.recoverCatching {
+            startForegroundTyped(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        }.isSuccess
+        if (!ok) {
+            DiagnosticLog.e(TAG, "re-grant: mediaProjection foreground type rejected")
+            resultCode = 0; resultData = null
+            return
+        }
+        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        val projection = runCatching { mpm.getMediaProjection(resultCode, data) }.getOrNull()
+        resultCode = 0; resultData = null
+        if (projection == null) {
+            DiagnosticLog.e(TAG, "re-grant: getMediaProjection returned null")
+            return
+        }
+        val mirror = MediaProjectionScreenSource(this, projection, sessionQuality, sessionZoom, sessionFocus)
+        if (runCatching { mirror.start() }.isFailure) {
+            DiagnosticLog.e(TAG, "re-grant: new capture failed to start")
+            return
+        }
+        source.replaceMirror(mirror)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching { getSystemService(NotificationManager::class.java).cancel(RESUME_NOTIF_ID) }
+        }
+        updateNotification("Screen sharing resumed")
+    }
+
     private fun buildNotification(text: String): Notification {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
@@ -440,6 +576,9 @@ class CaptureService : Service() {
 
     companion object {
         private const val NOTIF_ID = 1
+        private const val RESUME_NOTIF_ID = 2
+        private const val RESUME_CHANNEL_ID = "pillion-resume"
+        const val ACTION_RESUME_PROJECTION = "app.pillion.action.RESUME_PROJECTION"
         private const val CHANNEL_ID = "pillion"
         private const val TAG = "Pillion"
         private const val MAX_SESSION_MS = 3L * 60 * 60 * 1000 // 3h safety cap
@@ -454,6 +593,9 @@ class CaptureService : Service() {
         const val EXTRA_DASH_ENABLED = "dashEnabled"
         const val EXTRA_DASH_WIDTH = "dashWidth"
         const val EXTRA_DASH_HEIGHT = "dashHeight"
+        const val EXTRA_MIRROR_ZOOM = "mirrorZoomPercent"
+        const val EXTRA_MIRROR_FOCUS = "mirrorFocus"
+        const val EXTRA_SCREEN_OFF_DIRECTIONS_ENABLED = "screenOffDirectionsEnabled"
 
         // Handed over by the Activity after the user grants screen capture.
         @Volatile var resultCode: Int = 0

@@ -70,7 +70,13 @@ class AndroidDashSetup(
     private fun prepareHelper() {
         _state.value = DashState(DashStage.Connecting, "Preparing dash display for offline rides...")
         runCatching {
-            DashHelper.ensureRunning(context, DashHelper.DEFAULT_QUALITY, settings.dashResolution())
+            DashHelper.ensureRunning(
+                context,
+                DashHelper.DEFAULT_QUALITY,
+                settings.dashResolution(),
+                settings.mirrorZoomPercent(),
+                settings.mirrorFocus(),
+            )
         }.onSuccess {
             _state.value = DashState(
                 DashStage.Connected,

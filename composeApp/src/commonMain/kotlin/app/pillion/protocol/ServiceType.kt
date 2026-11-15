@@ -19,6 +19,9 @@ internal object ServiceType {
     // image channel
     const val IMAGE = 0
     const val IMAGE_ACK = 80
+    // dashboard controls (dash -> phone)
+    const val MAP_ZOOM_IN_REQUEST = 51
+    const val MAP_ZOOM_OUT_REQUEST = 52
     // post-auth setup burst
     const val NAV_STATUS = 2
     const val DAY_NIGHT = 31

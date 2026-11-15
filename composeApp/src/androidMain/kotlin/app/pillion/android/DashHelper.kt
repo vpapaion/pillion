@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import app.pillion.core.DashResolution
+import app.pillion.core.MirrorFocus
+import app.pillion.core.MirrorZoom
 import app.pillion.server.DashServer
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -35,6 +37,8 @@ object DashHelper {
         context: Context,
         quality: Int,
         dashResolution: DashResolution,
+        zoomPercent: Int,
+        mirrorFocus: MirrorFocus,
         preferExisting: Boolean = false,
     ) {
         if (preferExisting && isRunning()) {
@@ -62,7 +66,7 @@ object DashHelper {
         // Clear any stale helper so resolution/quality changes apply whenever ADB is reachable.
         runCatching { adb.runShell("pkill -f app.pillion.server.DashServer") }
         waitUntilStopped()
-        spawn(adb, appContext, quality, dashResolution)
+        spawn(adb, appContext, quality, dashResolution, zoomPercent, mirrorFocus)
         check(waitUntilRunning()) { "Dash helper did not start" }
     }
 
@@ -103,7 +107,13 @@ object DashHelper {
      * offline as long as [PillionAdb.enableTcpip] succeeded earlier.
      */
     @Synchronized
-    fun startWatchdog(context: Context, quality: Int, dashResolution: DashResolution) {
+    fun startWatchdog(
+        context: Context,
+        quality: Int,
+        dashResolution: DashResolution,
+        zoomPercent: Int,
+        mirrorFocus: MirrorFocus,
+    ) {
         if (watchdog?.isAlive == true) return // exactly one watchdog, even across session restarts
         val appContext = context.applicationContext
         // Each thread checks `watchdog === this`: if it's no longer the designated watchdog (a new one
@@ -121,7 +131,7 @@ object DashHelper {
                     // A helper we just spawned is still coming up; don't pkill+respawn it mid-startup.
                     if (SystemClock.elapsedRealtime() - lastSpawnAt < SPAWN_GRACE_MS) continue
                     Log.w(TAG, "dash: helper down — attempting respawn over loopback")
-                    runCatching { ensureRunning(appContext, quality, dashResolution) }
+                    runCatching { ensureRunning(appContext, quality, dashResolution, zoomPercent, mirrorFocus) }
                         .onSuccess { Log.i(TAG, "dash: helper respawned") }
                         .onFailure { Log.w(TAG, "dash: respawn failed (offline / adb gone): ${it.message}") }
                 }
@@ -145,11 +155,20 @@ object DashHelper {
             }
         }.isSuccess
 
-    private fun spawn(adb: PillionAdb, context: Context, quality: Int, dashResolution: DashResolution) {
+    private fun spawn(
+        adb: PillionAdb,
+        context: Context,
+        quality: Int,
+        dashResolution: DashResolution,
+        zoomPercent: Int,
+        mirrorFocus: MirrorFocus,
+    ) {
+        val safeZoom = MirrorZoom.clamp(zoomPercent)
         Log.d(
             TAG,
             "dash: spawning helper virtual=${dashResolution.width}x${dashResolution.height} " +
-                "output=${DASH_PROTOCOL_WIDTH}x$DASH_PROTOCOL_HEIGHT",
+                "output=${DASH_PROTOCOL_WIDTH}x$DASH_PROTOCOL_HEIGHT zoom=$safeZoom% " +
+                "focus=${mirrorFocus.name}",
         )
         // Detach the helper so it survives ADB disconnect AND Wi-Fi loss:
         // 1. setsid gives it a new session/process group, outside adbd's teardown group.
@@ -160,7 +179,7 @@ object DashHelper {
         val inner = "CLASSPATH=\$(pm path ${context.packageName} | grep base.apk | cut -d: -f2):\$SYSTEMSERVERCLASSPATH " +
             "app_process / app.pillion.server.DashServer " +
             "${dashResolution.width} ${dashResolution.height} $DPI $quality " +
-            "$DASH_PROTOCOL_WIDTH $DASH_PROTOCOL_HEIGHT " +
+            "$DASH_PROTOCOL_WIDTH $DASH_PROTOCOL_HEIGHT $safeZoom ${mirrorFocus.name} " +
             "</dev/null >/dev/null 2>&1 &"
         val stream = adb.openShellStream("setsid sh -c '$inner'")
         runCatching { stream.openInputStream().readBytes() }
